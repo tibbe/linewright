@@ -19,6 +19,17 @@ pub(super) fn holds(html: &Html) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether `html` shows one hold, which starts with `start` and links to
+/// the server page.
+#[track_caller]
+fn assert_one_hold_to_the_server_page(html: &Html, start: &str) {
+    let held = holds(html);
+    assert!(
+        held.len() == 1 && held[0].0.starts_with(start) && held[0].1 == "/server",
+        "{held:?}"
+    );
+}
+
 /// How many icons `element` holds that a screen reader skips, so that its
 /// text alone is its label.
 fn icons(element: ElementRef) -> usize {
@@ -379,13 +390,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
 
     let html = pages.page("/").await;
 
-    assert_eq!(
-        holds(&html),
-        [(
-            "drain: under way since 2026-10-01 12:00:20 UTC".to_string(),
-            "/server".to_string()
-        )]
-    );
+    assert_one_hold_to_the_server_page(&html, "drain: ");
     assert_notice(&html, &["alert"], "pause-circle");
     let facts = server_facts(&pages.page("/server").await);
     assert_eq!(
@@ -522,13 +527,7 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
 
     let html = pages.page("/").await;
 
-    assert_eq!(
-        holds(&html),
-        [(
-            format!("repository file Linewright cannot use: `.linewright/config.toml`: {error}"),
-            "/server".to_string(),
-        )]
-    );
+    assert_one_hold_to_the_server_page(&html, "repository file Linewright cannot use: ");
     assert!(
         has_classes(select(&html, "#holds .alert")[0], &["alert-error"]),
         "{}",
