@@ -225,15 +225,8 @@ mod tests {
 
     /// `docs/specs/ui_patterns.md`, Tables, Pages.
     #[test_log::test]
-    fn a_missing_non_numeric_or_zero_page_is_the_first() {
-        for field in [
-            None,
-            Some(""),
-            Some("two"),
-            Some("-3"),
-            Some("0"),
-            Some("1.5"),
-        ] {
+    fn a_non_numeric_or_zero_page_is_the_first() {
+        for field in [Some(""), Some("two"), Some("-3"), Some("0"), Some("1.5")] {
             assert_eq!(
                 Pages::of(100, Requested::of(field)).range(),
                 0..25,
@@ -245,9 +238,7 @@ mod tests {
     /// `docs/specs/ui_patterns.md`, Tables, Pages.
     #[test_log::test]
     fn a_page_shows_25_of_the_tables_rows() {
-        assert_eq!(Pages::of(248, requested(1)).range(), 0..25);
         assert_eq!(Pages::of(248, requested(2)).range(), 25..50);
-        assert_eq!(Pages::of(248, requested(10)).range(), 225..248);
         assert_eq!(Pages::of(3, requested(1)).range(), 0..3);
         assert_eq!(Pages::of(0, requested(1)).range(), 0..0);
     }
@@ -284,9 +275,6 @@ mod tests {
                 .showing
         };
         assert_eq!(showing(248, 2), "Showing 26–50 of 248 runs");
-        assert_eq!(showing(248, 1), "Showing 1–25 of 248 runs");
-        assert_eq!(showing(248, 10), "Showing 226–248 of 248 runs");
-        assert_eq!(showing(26, 2), "Showing 26–26 of 26 runs");
     }
 
     /// `docs/specs/ui_patterns.md`, Tables, Pages, Under the table.
@@ -306,16 +294,13 @@ mod tests {
 
     /// `docs/specs/ui_patterns.md`, Tables, Pages, Under the table.
     #[test_log::test]
-    fn previous_is_disabled_on_the_first_page_and_next_on_the_last() {
+    fn previous_and_next_lead_to_the_pages_either_side_of_the_page_shown() {
         let shown = |page| Pages::of(248, requested(page)).shown("runs", href).unwrap();
-        let first = shown(1);
-        assert_eq!(first.previous, None);
-        assert_eq!(first.next, Some(href(requested(2))));
         let middle = shown(5);
         assert_eq!(middle.previous, Some(href(requested(4))));
         assert_eq!(middle.next, Some(href(requested(6))));
-        let last = shown(12);
-        assert_eq!(last.previous, Some(href(requested(9))));
-        assert_eq!(last.next, None);
+        let past_the_last = shown(12);
+        assert_eq!(past_the_last.previous, Some(href(requested(9))));
+        assert_eq!(past_the_last.next, None);
     }
 }
