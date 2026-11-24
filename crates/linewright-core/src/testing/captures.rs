@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::benchmarks::{BenchmarkId, Benchmarks, KeptTask, MakeError};
 use crate::name::Name;
 use crate::runs::{RunId, Runs};
+use crate::store::Store;
 use crate::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskStage};
-use crate::testing::{World, back_door, implement_gadgets, open_designed_gadgets, runs_in};
+use crate::testing::{World, back_door, open_designed_gadgets, runs_in};
 
 pub async fn runs(world: &World) -> Runs {
     runs_in(&world.work_dir).await
@@ -101,12 +102,16 @@ pub async fn record_as_before_the_properties(work: &Path) {
     pool.close().await;
 }
 
-/// An implement run on the ticket "Gadgets", and its ID.
-pub async fn implemented(world: &mut World) -> String {
-    implement_gadgets(world);
+/// An implement run on the ticket "Gadgets", which it claimed, ended with
+/// the input it recorded, written through the back door, and its ID.
+pub async fn implemented(world: &World) -> String {
     let ticket = open_designed_gadgets(world);
-    world.poll().await;
-    format!("{}/implement-1", ticket.0)
+    Store::assign(&*world.store, ticket).await.unwrap();
+    let run = format!("{}/implement-1", ticket.0);
+    world
+        .run_recorded(&run, &[ticket], &["main", &world.ticket_branch(ticket)])
+        .await;
+    run
 }
 
 pub fn benchmark(name: &str) -> Name {

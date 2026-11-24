@@ -74,8 +74,8 @@ async fn lw_capture_of_an_automations_run_exits_1_saying_why() {
 
 #[test_log::test(tokio::test)]
 async fn lw_capture_without_criteria_is_a_command_line_error() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
+    let (world, work_dir) = world_in_work_dir().await;
+    let run = implemented(&world).await;
 
     let output = lw_in(
         work_dir.path(),
@@ -90,8 +90,8 @@ async fn lw_capture_without_criteria_is_a_command_line_error() {
 
 #[test_log::test(tokio::test)]
 async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_github() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
+    let (world, work_dir) = world_in_work_dir().await;
+    let run = implemented(&world).await;
     keep_benchmark(&work_dir.path().join(REPO), IMPLEMENTS, "implement").await;
 
     let output = lw_capture(work_dir.path(), &run, "gadgets", " \n\t\n").await;
@@ -107,8 +107,8 @@ async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_gi
 
 #[test_log::test(tokio::test)]
 async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
+    let (world, work_dir) = world_in_work_dir().await;
+    let run = implemented(&world).await;
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), "Gadgets.\n").unwrap();
 

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -5,9 +6,13 @@ use super::{FakeClock, REPO, write_files};
 use crate::api::{AutomationsLink, BenchmarkRunsLink, EnvironmentLink, Sources};
 use crate::clock::Clock;
 use crate::database::Database;
+use crate::domain::{Number, Timestamp};
 use crate::ending::Ends;
+use crate::input::Input;
 use crate::runs::{RepoWorkDir, Runs};
 use crate::status::Serving;
+use crate::store::Store;
+use crate::store::local::LocalStore;
 use crate::winding_up::WindingUp;
 
 /// A work directory whose repository's directory holds each of `files`, a
@@ -196,6 +201,43 @@ pub async fn keep_input(work_dir: &Path, id: &str, input: &serde_json::Value) {
     .await
     .unwrap_or_else(|e| panic!("keeping a run's input: {e}"));
     pool.close().await;
+}
+
+/// The input a run started at `start` records when it is given `items` and
+/// `branches`, read from `store` as it holds them now, through
+/// [`Store::record_items`], [`Store::heads`] and
+/// [`Store::record_properties`], with the current
+/// [`API_VERSION`](crate::store::API_VERSION). Of `branches`, only those
+/// the store has are given a head.
+///
+/// # Panics
+///
+/// When the store fails one of those reads.
+pub async fn recorded_input(
+    store: &LocalStore,
+    items: &[Number],
+    branches: &[&str],
+    start: Timestamp,
+) -> Input {
+    let items: BTreeSet<Number> = items.iter().copied().collect();
+    let branches: Vec<String> = branches.iter().map(ToString::to_string).collect();
+    let read =
+        |what: &str, e: anyhow::Error| -> ! { panic!("reading the {what} to record: {e:#}") };
+    Input {
+        api_version: crate::store::API_VERSION.to_string(),
+        start,
+        items: Store::record_items(store, &items)
+            .await
+            .unwrap_or_else(|e| read("items", e)),
+        heads: Store::heads(store, &branches)
+            .await
+            .unwrap_or_else(|e| read("heads", e)),
+        properties: Some(
+            Store::record_properties(store)
+                .await
+                .unwrap_or_else(|e| read("properties", e)),
+        ),
+    }
 }
 
 /// How deep a run's record file is under its work directory, as
