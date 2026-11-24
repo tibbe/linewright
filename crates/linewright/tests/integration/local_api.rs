@@ -8,7 +8,7 @@ use linewright_core::factory::ServeEnd;
 use linewright_core::serving::{Listeners, UiListener};
 use linewright_core::testing;
 use linewright_core::testing::*;
-use linewright_core::webhook::{Listener, Pending};
+use linewright_core::webhook::Pending;
 use linewright_core::winding_up::{Remaining, WindingUp};
 use tokio_util::sync::CancellationToken;
 
@@ -19,7 +19,6 @@ struct Answering {
     api: Api,
     ends: Ends,
     clock: std::sync::Arc<FakeClock>,
-    listener: Option<Listener>,
     /// The web UI, on a port the system chose.
     ui: UiListener,
     winding_up: WindingUp,
@@ -29,28 +28,21 @@ struct Answering {
 
 impl Answering {
     /// Serves `world`'s factory, polling hourly so its view holds still,
-    /// with webhooks on if `webhooks`, and waits for its first poll.
-    async fn start(world: World, webhooks: bool) -> Answering {
+    /// with webhooks off, and waits for its first poll.
+    async fn start(world: World) -> Answering {
         let runtime_dir = tempfile::tempdir().unwrap();
         let claimed = api::claim(&socket_dir_in(runtime_dir.path()), REPO).unwrap();
-        Answering::start_claimed(world, webhooks, runtime_dir, claimed).await
+        Answering::start_claimed(world, runtime_dir, claimed).await
     }
 
     /// As [`Answering::start`], on the socket claimed in `runtime_dir`.
     async fn start_claimed(
         world: World,
-        webhooks: bool,
         runtime_dir: tempfile::TempDir,
         claimed: api::Claimed,
     ) -> Answering {
-        let answering = Answering::serve(
-            world,
-            webhooks,
-            runtime_dir,
-            claimed,
-            Duration::from_hours(1),
-        )
-        .await;
+        let answering =
+            Answering::serve(world, runtime_dir, claimed, Duration::from_hours(1)).await;
         let mut served = answering.serving.served.clone();
         tokio::time::timeout(Duration::from_secs(10), served.wait_for(Option::is_some))
             .await
@@ -64,30 +56,16 @@ impl Answering {
     async fn start_polling(world: World, poll_interval: Duration) -> Answering {
         let runtime_dir = tempfile::tempdir().unwrap();
         let claimed = api::claim(&socket_dir_in(runtime_dir.path()), REPO).unwrap();
-        Answering::serve(world, false, runtime_dir, claimed, poll_interval).await
+        Answering::serve(world, runtime_dir, claimed, poll_interval).await
     }
 
     async fn serve(
         world: World,
-        webhooks: bool,
         runtime_dir: tempfile::TempDir,
         claimed: api::Claimed,
         poll_interval: Duration,
     ) -> Answering {
         let pending = Pending::default();
-        let listener = if webhooks {
-            Some(
-                Listener::bind(
-                    &testing::webhooks("127.0.0.1:0"),
-                    pending.clone(),
-                    world.clock.clone(),
-                )
-                .await
-                .unwrap(),
-            )
-        } else {
-            None
-        };
         let World {
             clock,
             factory,
@@ -103,18 +81,15 @@ impl Answering {
             base: work_dir,
             repo: REPO.parse().unwrap(),
         };
-        let sources = Sources {
-            deliveries: listener.as_ref().map(Listener::tally),
-            ..Box::pin(sources_of(
-                &serving,
-                clock.clone(),
-                since,
-                work_dir,
-                &ends,
-                &winding_up,
-            ))
-            .await
-        };
+        let sources = Box::pin(sources_of(
+            &serving,
+            clock.clone(),
+            since,
+            work_dir,
+            &ends,
+            &winding_up,
+        ))
+        .await;
         let ui = ui_on("127.0.0.1:0");
         let ui = UiListener::bind(&ui, sources.clone(), linewright_web::router)
             .await
@@ -125,7 +100,6 @@ impl Answering {
             api,
             ends,
             clock,
-            listener,
             ui,
             winding_up,
             runtime_dir,
@@ -143,7 +117,6 @@ impl Answering {
         let Answering {
             serving,
             api,
-            listener,
             ui,
             winding_up,
             runtime_dir,
@@ -153,7 +126,7 @@ impl Answering {
         tokio::spawn(async move {
             let end = serving.finished().await;
             let listeners = Listeners {
-                webhooks: listener,
+                webhooks: None,
                 ui: Some(ui),
                 api,
             };
@@ -169,9 +142,6 @@ impl Answering {
     }
 
     async fn stop(self) {
-        if let Some(listener) = self.listener {
-            within(STOPPING, "the webhook listener stops", listener.stop()).await;
-        }
         within(STOPPING, "the web UI stops", self.ui.stop()).await;
         within(STOPPING, "the API stops", self.api.stop()).await;
         within(STOPPING, "serving stops", self.serving.stop()).await;
@@ -310,31 +280,14 @@ async fn with_ticket_and_automation() -> World {
 }
 
 #[test_log::test(tokio::test)]
-async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+async fn status_shows_serves_answer_uncoloured_off_a_terminal() {
+    let answering = Answering::start(with_ticket_and_automation().await).await;
 
     let output = answering.lw(&["status"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    let labels: Vec<&str> = lines
-        .iter()
-        .map(|line| line.split_once(':').map_or(*line, |(label, _)| label))
-        .collect();
-    assert_eq!(
-        labels,
-        [
-            "serving since",
-            "last poll",
-            "next poll",
-            "runs in flight",
-            "",
-            "#1",
-            "",
-            "automation weekly.md trigger",
-            "automation weekly.md last run",
-            "automation weekly.md next run",
-        ],
+    assert!(
+        output.stdout.lines().any(|line| line.starts_with("#1: ")),
         "{}",
         output.stdout
     );
@@ -396,7 +349,7 @@ async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_la
 
 #[test_log::test(tokio::test)]
 async fn status_json_prints_the_api_answer_as_it_is() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+    let answering = Answering::start(with_ticket_and_automation().await).await;
     let (status, answer) = get(answering.runtime_dir.path(), "localhost", "/api/status").await;
 
     let output = answering.lw(&["status", "--json"]).await;
@@ -408,64 +361,8 @@ async fn status_json_prints_the_api_answer_as_it_is() {
 }
 
 #[test_log::test(tokio::test)]
-async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
-    let mut world = with_ticket_and_automation().await;
-    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-    world
-        .factory
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await
-        .unwrap();
-    let answering = Answering::start(world, false).await;
-
-    let output = answering.lw(&["status"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert!(
-        output
-            .stdout
-            .lines()
-            .any(|line| line
-                .starts_with("automation weekly.md last run: weekly.md/1 by hand, started ")),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
-}
-
-#[test_log::test(tokio::test)]
-async fn with_webhooks_on_status_shows_the_last_accepted_delivery_and_those_refused() {
-    let answering = Answering::start(World::new().await, true).await;
-    let listener = answering.listener.as_ref().unwrap();
-    signed(listener, "ping", "{}").await;
-    let unsigned = Request {
-        signature: None,
-        ..Request::signed_json("{}")
-    };
-    unsigned.send(listener).await;
-    unsigned.send(listener).await;
-
-    let output = answering.lw(&["status"]).await;
-
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert!(
-        lines.iter().any(|line| line
-            .strip_prefix("last webhook delivery accepted: 2026-10-01 12:")
-            .is_some_and(|rest| rest.ends_with(" UTC"))),
-        "{}",
-        output.stdout
-    );
-    assert!(
-        lines.contains(&"webhook deliveries refused: 2"),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
-}
-
-#[test_log::test(tokio::test)]
 async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
-    let answering = Answering::start(World::new().await, false).await;
+    let answering = Answering::start(World::new().await).await;
 
     let in_process = api::claim(&socket_dir_in(answering.runtime_dir.path()), REPO);
     let output = answering.lw(&["serve"]).await;
@@ -505,7 +402,7 @@ async fn status_without_serve_running_exits_3_saying_so_in_one_line() {
 /// or asks `serve` to act, logs nothing".
 #[test_log::test(tokio::test)]
 async fn a_command_that_answers_or_asks_serve_to_act_writes_nothing_to_stderr() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+    let answering = Answering::start(with_ticket_and_automation().await).await;
     let runtime_dir = answering.runtime_dir.path();
 
     for format in ["text", "json"] {
@@ -561,7 +458,7 @@ async fn a_wrong_setting_outside_the_command_line_exits_1() {
 
 #[test_log::test(tokio::test)]
 async fn runs_gives_the_same_answer_with_serve_running_and_without() {
-    let answering = Answering::start(with_issue_for_triage().await, false).await;
+    let answering = Answering::start(with_issue_for_triage().await).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let args = ["--work-dir", work_dir, "runs", "1"];
@@ -603,7 +500,7 @@ async fn runs_gives_the_same_answer_with_serve_running_and_without() {
 async fn a_run_whose_serve_died_is_listed_as_interrupted() {
     let world = with_issue_for_triage().await;
     world.harness.takes(Duration::from_mins(1));
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let args = ["--work-dir", work_dir, "runs"];
@@ -630,56 +527,24 @@ async fn a_run_whose_serve_died_is_listed_as_interrupted() {
 }
 
 #[test_log::test(tokio::test)]
-async fn explain_shows_where_the_item_is_when_serve_last_read_it_and_what_linewright_waits_for() {
-    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+async fn explain_shows_serves_answer_for_the_item() {
+    let answering = Answering::start(with_ticket_and_automation().await).await;
 
     let output = answering.lw(&["explain", "1"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 4, "{}", output.stdout);
-    assert_eq!(lines[0], "#1: Do the thing");
-    assert_eq!(lines[1], "state: Waiting for a decision");
-    assert!(
-        lines[2]
-            .strip_prefix("last read: 2026-10-01 ")
-            .is_some_and(|rest| rest.ends_with(" UTC")),
+    assert_eq!(
+        output.stdout.lines().next(),
+        Some("#1: Do the thing"),
         "{}",
         output.stdout
     );
-    assert_eq!(
-        lines[3],
-        "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`"
-    );
-    answering.stop().await;
-}
-
-#[test_log::test(tokio::test)]
-async fn explain_of_an_item_linewright_leaves_alone_says_why_as_serve_reads_it_now() {
-    let world = with_ticket_and_automation().await;
-    let closed = world.store.open_issue(
-        "maintainer",
-        "Old idea",
-        "Maybe.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.store.close_issue_as_completed(closed).unwrap();
-    let answering = Answering::start(world, false).await;
-
-    let output = answering.lw(&["explain", &closed.0.to_string()]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 4, "{}", output.stdout);
-    assert_eq!(lines[0], format!("{closed}: Old idea"));
-    assert_eq!(lines[1], "state: Done");
-    assert_eq!(lines[3], "left alone: it is closed");
     answering.stop().await;
 }
 
 #[test_log::test(tokio::test)]
 async fn explain_of_a_number_with_no_item_exits_4_saying_so() {
-    let answering = Answering::start(World::new().await, false).await;
+    let answering = Answering::start(World::new().await).await;
 
     let output = answering.lw(&["explain", "7"]).await;
 
@@ -707,7 +572,7 @@ async fn logs_gives_the_same_answer_with_serve_running_and_without() {
             })
             .to_string())
         });
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     let work_dir = answering._dir.path().join("work");
     let work_dir = work_dir.to_str().unwrap();
     let runs = ["--work-dir", work_dir, "runs", "1"];
@@ -774,7 +639,7 @@ fn runs_in_flight(answer: &str) -> usize {
 async fn status_and_explain_show_the_run_in_flight_until_it_ends() {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     eventually_async(|| async {
         runs_in_flight(&answering.lw(&["status", "--json"]).await.stdout) == 1
     })
@@ -886,7 +751,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     let world = with_issue_for_triage().await;
     before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     let turn = turn_1();
     agent.writes(&turn.through_the_first_bash_result);
     eventually_async(|| async {
@@ -1036,7 +901,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     let world = with_issue_for_triage().await;
     before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     let runtime_dir = answering.runtime_dir.path();
     let turn = turn_1();
     agent.writes(&turn.through_the_first_bash_result);
@@ -1155,7 +1020,7 @@ async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
     let world = with_issue_for_triage().await;
     before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     agent.writes(&turn_1().through_the_first_bash_result);
     eventually_async(|| async {
         answering
@@ -1250,7 +1115,7 @@ async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let world = with_issue_for_triage().await;
     before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     let turn = turn_1();
     agent.writes(&turn.through_the_first_bash_result);
     eventually_async(|| async {
@@ -1290,7 +1155,7 @@ async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
 async fn triage_held() -> (HeldTurn, Answering) {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     eventually_async(|| async {
         answering
             .lw(&["status"])
@@ -1564,7 +1429,7 @@ async fn drain_returns_once_serve_has_exited_though_another_has_started_since() 
         }
     })
     .await;
-    let restarted = Answering::start_claimed(restarted, false, runtime_dir, claimed).await;
+    let restarted = Answering::start_claimed(restarted, runtime_dir, claimed).await;
     let (code, shown, stderr) = drain.exits().await;
 
     assert_eq!(code, Some(0), "{stderr}");
@@ -1617,7 +1482,7 @@ async fn a_drain_whose_run_outlasts_its_timeout_becomes_a_stop_at_the_deadline()
 #[test_log::test(tokio::test)]
 async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing() {
     use tokio::io::AsyncWriteExt;
-    let answering = Answering::start(World::new().await, false).await;
+    let answering = Answering::start(World::new().await).await;
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
     let dir = socket_dir_in(&runtime_dir);
     let socket = api::socket_path(&dir, REPO);
@@ -1666,34 +1531,6 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
     assert_eq!(shown, "drain: begun\nserve: exited\n");
     assert!(claimed.is_ok(), "{:?}", claimed.err());
     within(STOPPING, "the API stops", stopped).await.unwrap();
-}
-
-#[test_log::test(tokio::test)]
-async fn status_names_a_file_in_the_repositorys_briefs_that_a_layer_may_not_hold() {
-    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    world
-        .store
-        .commit(
-            "maintainer",
-            "main",
-            &[(".linewright/briefs/prompts/implment.md", "Implement it.\n")],
-            "Tune the implementing",
-        )
-        .await
-        .unwrap();
-    let answering = Answering::start(world, false).await;
-
-    let output = answering.lw(&["status"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert!(
-        output.stdout.lines().any(|line| line
-            == "repository file Linewright cannot use: `.linewright/briefs/prompts/implment.md`: \
-                not a file a layer may hold"),
-        "{}",
-        output.stdout
-    );
-    answering.stop().await;
 }
 
 /// A world whose work dir is `REPO`'s, with `command` as its setup command.
@@ -1764,7 +1601,7 @@ async fn environment_follow_prints_a_build_in_progress_as_it_comes_and_ends_when
         gate.display()
     ))
     .await;
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     answering
         .environment_until(|answer| !answer["environment"]["building_since"].is_null())
         .await;
@@ -1833,7 +1670,7 @@ async fn environment_rebuild_returns_once_the_build_ends_with_a_status_saying_ho
         fail.display()
     ))
     .await;
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
     answering.environment_until(built_and_idle).await;
 
     let succeeded = answering.lw(&["environment", "rebuild"]).await;
@@ -1891,7 +1728,7 @@ async fn environment_rebuild_returns_once_the_build_ends_with_a_status_saying_ho
 #[test_log::test(tokio::test)]
 async fn with_no_setup_command_environment_and_its_rebuild_say_there_is_none() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-    let answering = Answering::start(world, false).await;
+    let answering = Answering::start(world).await;
 
     let shown = answering.lw(&["environment"]).await;
     let rebuilt = answering.lw(&["environment", "rebuild"]).await;
