@@ -86,7 +86,8 @@ and out and to allow a client: only the UI gives them.
 - **Logged.** Linewright's log ([The log](operation.md#the-log)) records each
   action that changes something. It records the person, the action and what
   the action changed. It also records how the action ended: done, refused or
-  failed, with the reason.
+  failed, with the reason. For an action that a command asks for, it records
+  `operator` instead of the person.
 
 ## People
 
