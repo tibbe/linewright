@@ -1,5 +1,5 @@
-//! How a tool that lists pages what it lists, and how a tool that shows
-//! transcripts pages them from their latest entries
+//! How a tool that lists pages what it lists, and how `get_run` and
+//! `get_trial` page transcripts from their latest entries
 //! (`docs/specs/access.md`, The MCP server, Lists and Transcripts).
 
 use std::num::NonZeroUsize;

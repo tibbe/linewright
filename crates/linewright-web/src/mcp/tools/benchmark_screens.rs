@@ -1,7 +1,7 @@
 //! The tools that show benchmarks (`docs/specs/access.md`, The MCP server,
 //! What a tool shows): each returns what its screen shows.
 
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::NonZeroUsize;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,17 +9,14 @@ use serde::{Deserialize, Serialize};
 use linewright_core::access::{Permit, Read};
 use linewright_core::actions::{
     self, Action, BenchmarkRow, BenchmarkRunScreen, BenchmarkScreen, BenchmarksFilters, Missing,
-    NoTrial, Outputs, RunHeading, RunScreen, SessionScreen, TaskScreen, TrialAt, TrialTranscript,
-    TrialTranscriptsScreen,
+    Outputs, TaskScreen, TranscriptScreen, TrialEntry,
 };
-use linewright_core::benchmarks::BenchmarkRunId;
 use linewright_core::task::TaskStage;
 use linewright_core::transcript::lines::Verbosity;
 
 use super::benchmarks::{benchmark_id, benchmark_run_id, task_id};
 use super::{Context, Tool};
-use crate::mcp::page::{Earlier, Paging};
-use trial_entry::TrialEntry;
+use crate::mcp::page::{Earlier, Latest, Paging};
 
 /// See the benchmarks, in the order of their names, narrowed by the
 /// filters of Benchmarks (`docs/specs/benchmarks.md`, Benchmarks).
@@ -153,17 +150,23 @@ impl Tool for GetBenchmarkRun {
     }
 }
 
-/// See a trial's transcripts: its run's, then its scorer's, each once it
-/// has started, and the latest of their entries as one list
+/// See a trial's transcripts: the run's, then the scorer's, each once it
+/// has started, with the latest of their entries as one list
 /// (`docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts).
+// It holds the fields of `Earlier` rather than flattening it, since serde
+// reads no unknown field of a struct that flattens another as refused
+// (<https://serde.rs/container-attrs.html#deny_unknown_fields>).
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct GetTrial {
     benchmark_run_id: i64,
+    /// The ID of the configuration in its benchmark run, as
+    /// `get_benchmark_run` gives it.
     configuration_id: i64,
+    /// The ID of the task, as `get_benchmark_run` gives it.
     task_id: i64,
     /// Which repetition of the task under the configuration, from 1.
-    repetition: NonZeroU32,
+    repetition: i64,
     /// Whether to give the transcripts in full, as the verbose switch does.
     #[serde(default)]
     verbose: bool,
@@ -174,86 +177,14 @@ pub(in crate::mcp) struct GetTrial {
     before: Option<String>,
 }
 
-/// A transcript of a trial, as [`GetTrial`] gives it: the heading and
-/// the sessions of its run.
-#[derive(Serialize, JsonSchema)]
-pub(super) struct TrialTranscriptScreen {
-    #[serde(flatten)]
-    heading: RunHeading,
-    sessions: Vec<SessionScreen>,
-}
-
-/// A trial's transcripts, as [`GetTrial`] gives them: its run and its
-/// scorer, each once it has started, and the latest of their entries, the
-/// run's then the scorer's, with how many earlier ones it left out and
-/// the `before` that gives those.
+/// A trial's transcripts, as [`GetTrial`] gives them: each that has
+/// started, with its sessions, and the latest of their entries, with how
+/// many earlier ones it left out and the `before` that gives those.
 #[derive(Serialize, JsonSchema)]
 pub(super) struct TrialPage {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    run: Option<TrialTranscriptScreen>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scorer: Option<TrialTranscriptScreen>,
-    /// In order.
-    entries: Vec<TrialEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    left_out: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    before: Option<String>,
-}
-
-impl TrialTranscriptScreen {
-    /// `screen`, the screen of the trial's transcript `transcript`, as
-    /// [`GetTrial`] gives it, and its entries.
-    fn of(
-        transcript: TrialTranscript,
-        screen: RunScreen,
-    ) -> (TrialTranscriptScreen, Vec<TrialEntry>) {
-        let entries = screen
-            .entries
-            .into_iter()
-            .map(|entry| TrialEntry::of(transcript, entry))
-            .collect();
-        let shown = TrialTranscriptScreen {
-            heading: screen.heading,
-            sessions: screen.sessions,
-        };
-        (shown, entries)
-    }
-}
-
-mod trial_entry {
-    use schemars::JsonSchema;
-    use serde::Serialize;
-
-    use linewright_core::actions::{EntryScreen, TrialTranscript};
-    use linewright_core::transcript::lines::Stamped;
-
-    /// An entry of a trial's transcripts, as [`super::GetTrial`] gives it:
-    /// its ID within the trial, `run/ID` or `scorer/ID`, which is what
-    /// `before` names, and the transcript it is of.
-    #[derive(Serialize, JsonSchema)]
-    pub(in crate::mcp) struct TrialEntry {
-        id: String,
-        transcript: TrialTranscript,
-        #[serde(flatten)]
-        line: Stamped,
-    }
-
-    impl TrialEntry {
-        /// `entry` of the trial's transcript `transcript`.
-        pub(in crate::mcp) fn of(transcript: TrialTranscript, entry: EntryScreen) -> TrialEntry {
-            TrialEntry {
-                id: format!("{}/{}", transcript.name(), entry.id),
-                transcript,
-                line: entry.line,
-            }
-        }
-
-        /// Its ID within the trial.
-        pub(in crate::mcp) fn id(&self) -> &str {
-            &self.id
-        }
-    }
+    transcripts: Vec<TranscriptScreen>,
+    #[serde(flatten)]
+    latest: Latest<TrialEntry>,
 }
 
 impl Tool for GetTrial {
@@ -262,67 +193,20 @@ impl Tool for GetTrial {
     type Output = TrialPage;
 
     async fn run(self, permit: &Permit<Read>, context: &Context<'_>) -> Result<TrialPage, String> {
-        let benchmark_run = benchmark_run_id(self.benchmark_run_id)?;
-        let (Ok(configuration), Ok(task)) = (
-            self.configuration_id.to_string().parse(),
-            self.task_id.to_string().parse(),
-        ) else {
-            let no_trial =
-                match actions::benchmark_run_record(permit, context.sources, benchmark_run)
-                    .await
-                    .map_err(|e| format!("{e:#}"))?
-                {
-                    None => NoTrial::BenchmarkRun,
-                    Some(_) => NoTrial::Trial,
-                };
-            return Err(refusal(no_trial, benchmark_run));
-        };
-        let at = TrialAt {
-            benchmark_run,
-            configuration,
-            task,
-            repetition: self.repetition,
-        };
-        let screen = actions::get_trial(permit, context.sources, &at, Verbosity::of(self.verbose))
+        let id = benchmark_run_id(self.benchmark_run_id)?;
+        let parts = (self.configuration_id, self.task_id, self.repetition);
+        let verbosity = Verbosity::of(self.verbose);
+        let shown = actions::get_trial_transcripts(permit, context.sources, id, parts, verbosity)
             .await
             .map_err(|e| format!("{e:#}"))?
-            .map_err(|no_trial| refusal(no_trial, benchmark_run))?;
-        let (run, scorer) = match screen {
-            TrialTranscriptsScreen::NotBegun => (None, None),
-            TrialTranscriptsScreen::Begun { run, scorer } => (
-                Some(TrialTranscriptScreen::of(TrialTranscript::Run, *run)),
-                scorer.map(|scorer| TrialTranscriptScreen::of(TrialTranscript::Scorer, *scorer)),
-            ),
-        };
-        let (run, run_entries) = run.unzip();
-        let (scorer, scorer_entries) = scorer.unzip();
-        let entries: Vec<TrialEntry> = run_entries
-            .into_iter()
-            .chain(scorer_entries)
-            .flatten()
-            .collect();
+            .map_err(|no| no.message(id))?;
         let earlier = Earlier {
             limit: self.limit,
             before: self.before,
         };
-        let latest = earlier.latest(entries, |entry| entry.id().to_string())?;
         Ok(TrialPage {
-            run,
-            scorer,
-            entries: latest.items,
-            left_out: latest.left_out,
-            before: latest.before,
+            transcripts: shown.transcripts,
+            latest: earlier.latest(shown.entries, |entry| entry.id().to_string())?,
         })
-    }
-}
-
-/// The refusal of a trial of benchmark run `benchmark_run` for
-/// `no_trial`: as `get_benchmark_run` refuses a benchmark run that does not
-/// exist, and else "No such trial." (`docs/specs/access.md`, The MCP
-/// server, A trial that does not exist).
-fn refusal(no_trial: NoTrial, benchmark_run: BenchmarkRunId) -> String {
-    match no_trial {
-        NoTrial::BenchmarkRun => Missing::BenchmarkRun(benchmark_run.to_string()).to_string(),
-        NoTrial::Trial => "No such trial.".to_string(),
     }
 }

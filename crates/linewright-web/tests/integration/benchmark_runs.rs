@@ -1,7 +1,9 @@
 use std::panic::Location;
 
 use linewright_core::access::{Caller, Permit, Read};
-use linewright_core::actions::{self, NoTrial, RunScreen, TrialAt, TrialTranscriptsScreen};
+use linewright_core::actions::{
+    self, NoTrial, RunScreen, TrialAt, TrialTranscript, TrialTranscripts, TrialTranscriptsScreen,
+};
 use linewright_core::transcript::lines::Verbosity;
 use serde_json::json;
 
@@ -1499,11 +1501,9 @@ fn assert_shows_as_the_page(screen: &RunScreen, page: &Html, run: &str) {
     assert_ne!(screen.entries.len(), 0);
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts: each
-/// once it has started.
-#[test_log::test(tokio::test)]
-async fn a_trial_shows_its_transcripts_as_its_pages_do_once_each_has_begun() {
-    let pages = with_benchmark_run().await;
+/// Starts the run of trial 2/2/1 of benchmark run 1 of `pages`, with no
+/// scorer yet: its output.
+fn running_trial(pages: &Pages) -> &'static str {
     let output = "benchmark-runs/1/2/2/1";
     pages.write(&[
         (&format!("{output}/task"), "1/implement-1\n"),
@@ -1528,6 +1528,15 @@ async fn a_trial_shows_its_transcripts_as_its_pages_do_once_each_has_begun() {
             linewright_core::testing::TURN_1,
         ),
     ]);
+    output
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts: each
+/// once it has started.
+#[test_log::test(tokio::test)]
+async fn a_trial_shows_its_transcripts_as_its_pages_do_once_each_has_begun() {
+    let pages = with_benchmark_run().await;
+    let output = running_trial(&pages);
 
     let pending = trial_screen(&pages, trial_at(1, 2, 2, 2)).await;
     let running = trial_screen(&pages, trial_at(1, 2, 2, 1)).await;
@@ -1561,6 +1570,103 @@ async fn a_trial_shows_its_transcripts_as_its_pages_do_once_each_has_begun() {
         &pages.page("/benchmark-runs/1/1/1/1/scorer").await,
         "1/implement-1",
     );
+}
+
+/// The ID and transcript of each entry of `shown`, as JSON gives them.
+fn ids(shown: &TrialTranscripts) -> Vec<(String, String)> {
+    shown
+        .entries
+        .iter()
+        .map(|entry| {
+            let entry = serde_json::to_value(entry).unwrap();
+            (
+                entry["transcript"].as_str().unwrap().to_string(),
+                entry["id"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// `docs/specs/access.md`, The MCP server, Transcripts: a trial's
+/// transcripts as one list, the run's entries then the scorer's, each
+/// named among them by its transcript and its own ID there.
+#[test_log::test(tokio::test)]
+async fn a_trials_entries_are_its_runs_then_its_scorers_each_named_by_its_transcript() {
+    let pages = with_benchmark_run().await;
+    running_trial(&pages);
+    let permit = reader(&pages).await;
+    let shown = async |at: TrialAt| {
+        let screen = trial_screen(&pages, at.clone()).await;
+        let joined = TrialTranscripts::from(screen.clone());
+        let named = actions::get_trial_transcripts(
+            &permit,
+            &pages.sources,
+            at.benchmark_run,
+            (
+                at.configuration.to_string().parse().unwrap(),
+                at.task.to_string().parse().unwrap(),
+                at.repetition.get().into(),
+            ),
+            Verbosity::Compact,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(named, joined);
+        (screen, joined)
+    };
+
+    let (scored_screen, scored) = shown(trial_at(1, 1, 1, 1)).await;
+    let (_, running) = shown(trial_at(1, 2, 2, 1)).await;
+    let (_, pending) = shown(trial_at(1, 2, 2, 2)).await;
+
+    let TrialTranscriptsScreen::Begun {
+        run,
+        scorer: Some(scorer),
+    } = scored_screen
+    else {
+        panic!("a scored trial's run and scorer have begun");
+    };
+    let expected: Vec<(String, String)> = [("run", &run), ("scorer", &scorer)]
+        .into_iter()
+        .flat_map(|(transcript, screen)| {
+            screen
+                .entries
+                .iter()
+                .map(move |entry| (transcript.to_string(), format!("{transcript}/{}", entry.id)))
+        })
+        .collect();
+    assert_eq!(ids(&scored), expected);
+    assert_eq!(
+        scored
+            .transcripts
+            .iter()
+            .map(|of| (of.transcript, of.sessions.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (TrialTranscript::Run, run.sessions.clone()),
+            (TrialTranscript::Scorer, scorer.sessions.clone()),
+        ]
+    );
+    let mut unique: Vec<String> = expected.into_iter().map(|(_, id)| id).collect();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), scored.entries.len());
+    assert_eq!(
+        running
+            .transcripts
+            .iter()
+            .map(|of| of.transcript)
+            .collect::<Vec<_>>(),
+        [TrialTranscript::Run]
+    );
+    assert!(
+        ids(&running)
+            .iter()
+            .all(|(transcript, _)| transcript == "run")
+    );
+    assert_eq!(pending.transcripts, []);
+    assert_eq!(pending.entries, []);
 }
 
 #[test_log::test(tokio::test)]
