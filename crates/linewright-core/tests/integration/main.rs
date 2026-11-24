@@ -15,6 +15,7 @@ mod benchmark_run_runs;
 mod board;
 mod board_words;
 mod briefs;
+mod by_hand;
 mod capture;
 mod closed_items;
 mod comment_check;

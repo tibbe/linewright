@@ -371,10 +371,11 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
     );
 
     web.harness.on_automation(|_| Ok(nothing_needs_doing()));
-    web.factory_beside()
+    web.serving
+        .automations
+        .ask("weekly.md".parse().unwrap())
         .await
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await
+        .unwrap()
         .unwrap();
 
     let mut last_seen = None;

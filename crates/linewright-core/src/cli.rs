@@ -9,12 +9,14 @@ use clap::{CommandFactory as _, FromArgMatches as _};
 use tracing::{error, info};
 
 use crate::api::{self, EventId, RequestError, Resume, Unanswered};
+use crate::automation::AutomationName;
 use crate::benchmarks::{
     self, Benchmark, BenchmarkAnswer, BenchmarkId, BenchmarkRunAnswer, BenchmarkRunId,
     BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, BenchmarksAnswer,
     CancelRefusal, ConfigurationId, EditTaskError, LaunchRefusal, RemoveError,
     RenameConfigurationError, RenameError, Repetitions, Shown, TaskChange, TaskId,
 };
+use crate::by_hand::HandTaken;
 use crate::clock::{Clock, SystemClock};
 use crate::config::{
     AutomationCommand, BenchmarkCommand, BenchmarkRunCommand, Cli, Command, Config,
@@ -1166,16 +1168,35 @@ async fn work(
             return Ok(score(lw, &config, &task, &dir, winding_up, log).await);
         }
         Command::Automation {
-            command: AutomationCommand::Run { name },
-        } => {
-            log.begin();
-            lw.start(&config, None, OnUsageLimit::End, Ends::new(), winding_up)
-                .await?
-                .run_automation(&name)
-                .await
-        }
+            command: AutomationCommand::Run { name, json },
+        } => return Ok(run_by_hand(&config, &name, json).await),
     };
     done.map(|()| SUCCESS)
+}
+
+/// Asks `serve` to run the automation `name`, and says the run's ID or
+/// what the run waits for.
+async fn run_by_hand(config: &Config, name: &AutomationName, json: bool) -> u8 {
+    let repo = match config.required_repo() {
+        Ok(repo) => repo,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let name = name.to_string();
+    let encoded = percent_encoding::utf8_percent_encode(&name, percent_encoding::NON_ALPHANUMERIC);
+    let resource = format!("/api/automations/{encoded}/run");
+    let body = match api::post_answer(&socket_dir(), &repo, &resource).await {
+        Ok(body) => body,
+        Err(e) => return print_answer(Err(refused(&e))),
+    };
+    print_answer(
+        read_as::<HandTaken>(&body, "a request by hand taken").map(|taken| {
+            if json {
+                format!("{}\n", String::from_utf8_lossy(&body))
+            } else {
+                taken.render()
+            }
+        }),
+    )
 }
 
 /// Writes run `id` into `dir`, with or without `serve`.

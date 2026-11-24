@@ -13,6 +13,7 @@ use super::harness::{ScriptedHarness, VARIABLES, failed_session, subject_file};
 use super::records::runs_in;
 use crate::api::{Publish, Served};
 use crate::briefs::OperatorBriefs;
+use crate::by_hand::{HandRefusal, HandTaken};
 use crate::database::Database;
 use crate::domain::{
     CheckState, Issue, Login, MergeMethod, MergeMethods, Number, ReviewState, Windows, label,
@@ -310,6 +311,14 @@ impl World {
     pub async fn poll(&mut self) {
         self.factory.cycle().await.unwrap();
         self.factory.settle().await;
+    }
+
+    /// Asks for a run of the automation `name` by hand, as `serve` takes
+    /// the request, and runs every run it started to its end.
+    pub async fn run_by_hand(&mut self, name: &str) -> Result<HandTaken, HandRefusal> {
+        let taken = self.factory.ask_by_hand(name.parse().unwrap()).await;
+        self.factory.settle().await;
+        taken
     }
 
     pub fn issue(&self, number: Number) -> Issue {
@@ -652,10 +661,7 @@ impl World {
         self.clock.advance(TimeDelta::hours(1));
         self.poll().await;
         self.clock.advance(TimeDelta::minutes(5));
-        self.factory
-            .run_automation(&"hourly.md".parse().unwrap())
-            .await
-            .unwrap();
+        self.run_by_hand("hourly.md").await.unwrap();
     }
 
     /// Merges a change to `src/other.txt` into the default branch, which no
@@ -794,6 +800,7 @@ pub struct Serving {
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
     pub polling: tokio::sync::watch::Receiver<Option<Polling>>,
     pub environment: crate::api::EnvironmentLink,
+    pub automations: crate::api::AutomationsLink,
     pub benchmark_runs: crate::api::BenchmarkRunsLink,
 }
 
@@ -818,6 +825,7 @@ impl Serving {
             served: links.served,
             polling: links.polling,
             environment: links.environment,
+            automations: links.automations,
             benchmark_runs: links.benchmark_runs,
         }
     }

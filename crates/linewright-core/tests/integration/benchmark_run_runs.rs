@@ -302,6 +302,7 @@ async fn api_of(serving: &Serving, world_clock: Arc<FakeClock>, work_dir: &Path)
         runs,
         ends: Ends::new(),
         environment: linewright_core::api::EnvironmentLink::default(),
+        automations: linewright_core::api::AutomationsLink::default(),
         benchmark_runs,
         exiting: linewright_core::winding_up::WindingUp::default().exiting(),
     };

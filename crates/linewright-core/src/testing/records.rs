@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::{FakeClock, REPO, write_files};
-use crate::api::{BenchmarkRunsLink, EnvironmentLink, Sources};
+use crate::api::{AutomationsLink, BenchmarkRunsLink, EnvironmentLink, Sources};
 use crate::clock::Clock;
 use crate::database::Database;
 use crate::ending::Ends;
@@ -465,6 +465,7 @@ pub async fn sources_before_polling(work_dir: RepoWorkDir) -> Sources {
         runs,
         ends: Ends::new(),
         environment: EnvironmentLink::default(),
+        automations: AutomationsLink::default(),
         benchmark_runs: BenchmarkRunsLink::default(),
         exiting: WindingUp::default().exiting(),
     }

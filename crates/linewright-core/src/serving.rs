@@ -84,6 +84,7 @@ where
         runs: Runs::new(database.clone()),
         ends: ends.clone(),
         environment: links.environment,
+        automations: links.automations,
         benchmark_runs: links.benchmark_runs,
         exiting: winding_up.exiting(),
     };

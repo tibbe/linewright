@@ -70,9 +70,9 @@ impl View {
         self.live.len() + self.automations_in_flight().count()
     }
 
-    fn automations_in_flight(&self) -> impl Iterator<Item = AutomationName> {
+    fn automations_in_flight(&self) -> impl Iterator<Item = (AutomationName, RunId)> {
         self.in_flight.iter().filter_map(|run| match &run.id.of {
-            RunOf::Automation { automation } => Some(automation.clone()),
+            RunOf::Automation { automation } => Some((automation.clone(), run.id.clone())),
             RunOf::Work { .. } => None,
         })
     }

@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright_core::automation::{Automation, LastScheduledRuns};
 use linewright_core::domain::*;
 use linewright_core::harness::UsageLimit;
+use linewright_core::holds::Hold;
 use linewright_core::prompts::{self, Readers};
 use linewright_core::reconcile::*;
 use linewright_core::repo_files::{FileError, Unusable};
@@ -3290,7 +3293,10 @@ fn automations(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Au
     Automations {
         defined: defined.iter().map(|name| hourly(name)).collect(),
         last_scheduled_runs: last_scheduled_runs(last),
-        in_flight: in_flight.iter().map(|name| name.parse().unwrap()).collect(),
+        in_flight: in_flight
+            .iter()
+            .map(|name| (name.parse().unwrap(), format!("{name}/1").parse().unwrap()))
+            .collect(),
         ..Automations::default()
     }
 }
@@ -3555,13 +3561,245 @@ fn triggered_runs_get_the_room_the_scheduled_runs_leave_and_record_the_triggers_
 fn an_automation_on_workflow_runs_with_a_run_in_flight_waits_for_it() {
     let world = Automations {
         defined: vec![on_failures("a.md")],
-        in_flight: vec!["a.md".parse().unwrap()],
+        in_flight: [("a.md".parse().unwrap(), "a.md/1".parse().unwrap())].into(),
         seen: seen_on_failures(&[("a.md", 0)]),
         attempts: vec![failed_attempt(1, 40)],
         ..Automations::default()
     };
 
     assert_eq!(scheduled(&world, 70), vec![]);
+}
+
+/// The run of the hourly automation `name` asked for by hand.
+fn run_by_hand(name: &str) -> Action {
+    Action::RunAutomation {
+        automation: Box::new(hourly(name)),
+        start: AutomationStart::Hand,
+    }
+}
+
+/// `world`, with the hourly automations `names` asked for by hand.
+fn asking(mut world: Automations, names: &[&str]) -> Automations {
+    world.asked = names
+        .iter()
+        .map(|name| (name.parse().unwrap(), hourly(name)))
+        .collect();
+    world
+}
+
+#[test_log::test]
+fn an_automation_asked_for_by_hand_runs_now_whatever_its_schedule() {
+    let not_due = asking(
+        automations(&["hourly.md"], &[("hourly.md", 30)], &[]),
+        &["hourly.md"],
+    );
+
+    let decided = decisions(
+        &snapshot_of(vec![]),
+        &[],
+        &Memory::default(),
+        &not_due,
+        t(40),
+        &policy(),
+        &[],
+    );
+
+    assert_eq!(decided.actions, vec![run_by_hand("hourly.md")]);
+    assert_eq!(decided.hand_waits, BTreeMap::new());
+}
+
+#[test_log::test]
+fn a_run_by_hand_leaves_a_scheduled_run_due_and_its_last_scheduled_run_as_it_was() {
+    let due = asking(
+        automations(&["hourly.md"], &[("hourly.md", 30)], &[]),
+        &["hourly.md"],
+    );
+    let run_by_hand_in_flight = automations(&["hourly.md"], &[("hourly.md", 30)], &["hourly.md"]);
+    let ended = automations(&["hourly.md"], &[("hourly.md", 30)], &[]);
+
+    assert_eq!(scheduled(&due, 70), vec![run_by_hand("hourly.md")]);
+    assert_eq!(scheduled(&run_by_hand_in_flight, 75), vec![]);
+    assert_eq!(
+        scheduled(&ended, 80),
+        vec![
+            scheduled_run("hourly.md"),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 80)])),
+        ]
+    );
+}
+
+#[test_log::test]
+fn a_run_by_hand_leaves_a_pending_attempt_pending_and_the_triggers_seen_as_they_were() {
+    let world = Automations {
+        defined: vec![on_failures("a.md")],
+        seen: seen_on_failures(&[("a.md", 0)]),
+        attempts: vec![failed_attempt(1, 40)],
+        asked: [("a.md".parse().unwrap(), on_failures("a.md"))].into(),
+        ..Automations::default()
+    };
+
+    assert_eq!(
+        scheduled(&world, 70),
+        vec![Action::RunAutomation {
+            automation: Box::new(on_failures("a.md")),
+            start: AutomationStart::Hand,
+        }]
+    );
+}
+
+#[rstest::rstest]
+#[case::a_drain(
+    Memory { drain: Some(Drain { since: t(0) }), ..Memory::default() },
+    &[],
+    Hold::Drain,
+)]
+#[case::the_usage_limit(
+    Memory { usage_limit: Some(UsageLimit { resets_at: t(90) }), ..Memory::default() },
+    &[],
+    Hold::UsageLimit { resets_at: t(90) },
+)]
+#[case::no_environment(
+    Memory { awaits_environment: true, ..Memory::default() },
+    &[],
+    Hold::Environment,
+)]
+#[case::a_file_the_automations_read(
+    Memory::default(),
+    &[Unusable {
+        file: FileError { path: ".linewright/briefs/prompts/automation.md".into(), error: "broken".into() },
+        holds: Readers::Only(&[prompts::Reads::Automations]),
+    }],
+    Hold::File(FileError { path: ".linewright/briefs/prompts/automation.md".into(), error: "broken".into() }),
+)]
+#[case::a_drain_and_the_usage_limit_by_rank(
+    Memory {
+        drain: Some(Drain { since: t(0) }),
+        usage_limit: Some(UsageLimit { resets_at: t(90) }),
+        ..Memory::default()
+    },
+    &[],
+    Hold::Drain,
+)]
+#[test_log::test]
+fn a_run_asked_for_by_hand_waits_for_a_hold(
+    #[case] memory: Memory,
+    #[case] unusable: &[Unusable],
+    #[case] waits_for: Hold,
+) {
+    let world = asking(
+        automations(&["hourly.md"], &[("hourly.md", 30)], &[]),
+        &["hourly.md"],
+    );
+
+    let decided = decisions(
+        &snapshot_of(vec![]),
+        &[],
+        &memory,
+        &world,
+        t(40),
+        &policy(),
+        unusable,
+    );
+
+    assert_eq!(decided.actions, vec![]);
+    assert_eq!(
+        decided.hand_waits,
+        BTreeMap::from([("hourly.md".parse().unwrap(), HandWait::Hold(waits_for))])
+    );
+}
+
+#[test_log::test]
+fn a_second_request_by_hand_while_a_run_of_the_automation_is_in_flight_waits_for_it() {
+    let world = asking(
+        automations(&["hourly.md"], &[("hourly.md", 30)], &["hourly.md"]),
+        &["hourly.md"],
+    );
+
+    let decided = decisions(
+        &snapshot_of(vec![]),
+        &[],
+        &Memory::default(),
+        &world,
+        t(40),
+        &policy(),
+        &[],
+    );
+
+    assert_eq!(decided.actions, vec![]);
+    assert_eq!(
+        decided.hand_waits,
+        BTreeMap::from([(
+            "hourly.md".parse().unwrap(),
+            HandWait::RunInFlight("hourly.md/1".parse().unwrap())
+        )])
+    );
+}
+
+#[test_log::test]
+fn runs_asked_for_by_hand_wait_for_room_once_the_pipeline_has_taken_its_own() {
+    let tickets = snapshot_of([1, 2, 3].map(|n| claimed(ticket(n))).to_vec());
+    let busy = [1, 2].map(|n| live(n, WorkKind::Implement));
+    let world = asking(
+        automations(&["a.md", "b.md"], &[("a.md", 30), ("b.md", 30)], &["c.md"]),
+        &["a.md", "b.md"],
+    );
+
+    let decided = decisions(
+        &tickets,
+        &busy,
+        &Memory::default(),
+        &world,
+        t(40),
+        &policy(),
+        &[],
+    );
+
+    assert_eq!(decided.actions, vec![implement(3)]);
+    assert_eq!(
+        decided.hand_waits,
+        BTreeMap::from([
+            ("a.md".parse().unwrap(), HandWait::Room),
+            ("b.md".parse().unwrap(), HandWait::Room),
+        ])
+    );
+}
+
+#[test_log::test]
+fn a_run_by_hand_takes_the_room_before_a_scheduled_one() {
+    let busy = [1, 2].map(|n| live(n, WorkKind::Implement));
+    let world = asking(
+        automations(&["a.md", "b.md"], &[("a.md", 30), ("b.md", 30)], &["c.md"]),
+        &["b.md"],
+    );
+
+    let decided = decisions(
+        &snapshot_of([1, 2].map(|n| claimed(ticket(n))).to_vec()),
+        &busy,
+        &Memory::default(),
+        &world,
+        t(70),
+        &policy(),
+        &[],
+    );
+
+    assert_eq!(
+        decided.actions,
+        vec![Action::RunAutomation {
+            automation: Box::new(hourly("b.md")),
+            start: AutomationStart::Hand,
+        },]
+    );
+}
+
+#[test_log::test]
+fn a_drain_begun_part_way_through_a_plan_holds_back_a_run_by_hand() {
+    assert_eq!(
+        held_back_by_drain(
+            vec![run_by_hand("hourly.md")],
+            &LastScheduledRuns::default()
+        ),
+        vec![]
+    );
 }
 
 #[test_log::test]

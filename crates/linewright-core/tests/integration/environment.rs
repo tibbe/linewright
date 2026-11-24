@@ -409,44 +409,26 @@ async fn without_serve_a_run_uses_the_environment_when_no_trigger_applies_and_bu
 }
 
 #[test_log::test(tokio::test)]
-async fn without_an_environment_once_starts_no_session_and_an_automation_run_fails_naming_the_build()
- {
+async fn without_an_environment_once_starts_no_session_naming_the_build() {
     let mut world = World::new().await;
     set_up_with(&world, "echo 'npm ERR! missing lockfile'; exit 3").await;
-    commit(&world, &[(".linewright/automations/hourly.md", HOURLY)]).await;
-    let automations = Arc::new(Mutex::new(0));
-    world.harness.on_automation({
-        let automations = automations.clone();
-        move |_| {
-            *automations.lock().unwrap() += 1;
-            Ok(nothing_needs_doing())
-        }
-    });
     let seen = implement_reading(&world);
     open_ticket(&world, "Do the thing");
 
     let prepared = world.factory.prepare_environment().await.unwrap_err();
     world.poll().await;
-    world.restart(|_| {}).await;
-    let ran = world
-        .factory
-        .run_automation(&"hourly.md".parse().unwrap())
-        .await
-        .unwrap_err();
 
-    for error in [format!("{prepared:#}"), format!("{ran:#}")] {
-        assert!(
-            error.contains("the build of the environment failed"),
-            "{error}"
-        );
-        assert!(error.contains("status 3"), "{error}");
-        assert!(
-            error.contains("`lw environment` shows its output"),
-            "{error}"
-        );
-    }
+    let error = format!("{prepared:#}");
+    assert!(
+        error.contains("the build of the environment failed"),
+        "{error}"
+    );
+    assert!(error.contains("status 3"), "{error}");
+    assert!(
+        error.contains("`lw environment` shows its output"),
+        "{error}"
+    );
     assert!(installed(&seen).is_empty(), "no session started");
-    assert_eq!(*automations.lock().unwrap(), 0);
 }
 
 #[test_log::test(tokio::test)]

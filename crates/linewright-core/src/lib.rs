@@ -18,6 +18,7 @@ pub mod benchmark_runs;
 pub mod benchmarks;
 pub mod board;
 pub mod briefs;
+pub mod by_hand;
 mod cadence;
 pub mod child;
 pub mod cli;

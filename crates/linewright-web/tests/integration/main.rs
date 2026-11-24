@@ -51,8 +51,7 @@ struct Web {
     stopping: CancellationToken,
     store: std::sync::Arc<linewright_core::store::local::LocalStore>,
     harness: std::sync::Arc<ScriptedHarness>,
-    clock: std::sync::Arc<FakeClock>,
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
 }
 
 /// The work directory of `REPO` under `dir`, where its runs keep their
@@ -85,6 +84,7 @@ async fn sources(
         runs,
         ends: linewright_core::ending::Ends::new(),
         environment: linewright_core::api::EnvironmentLink::default(),
+        automations: linewright_core::api::AutomationsLink::default(),
         benchmark_runs: linewright_core::api::BenchmarkRunsLink::default(),
         exiting: linewright_core::winding_up::WindingUp::default().exiting(),
     }
@@ -121,6 +121,7 @@ impl Web {
         let sources = Sources {
             deliveries: Some(listener.tally()),
             environment: serving.environment.clone(),
+            automations: serving.automations.clone(),
             ..sources(
                 &dir,
                 &clock,
@@ -140,26 +141,8 @@ impl Web {
             stopping,
             store,
             harness,
-            clock,
-            dir,
+            _dir: dir,
         }
-    }
-
-    /// A factory beside `serve`'s, as `linewright automation run` starts
-    /// one, over the work directory a world adjusted to `work_dir/REPO`.
-    fn work_dir(&self) -> std::path::PathBuf {
-        work_dir(&self.dir)
-    }
-
-    async fn factory_beside(&self) -> linewright_core::factory::Factory {
-        linewright_core::factory::Factory::start(
-            self.store.clone(),
-            self.harness.clone(),
-            self.clock.clone(),
-            config(&self.work_dir()).await,
-        )
-        .await
-        .unwrap()
     }
 
     /// A delivery naming issue #`number`.

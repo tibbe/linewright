@@ -21,10 +21,12 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+use crate::automation::AutomationName;
 use crate::benchmark_runs::runner::BenchmarkRunsShown;
 use crate::benchmarks::{BenchmarkRunId, BenchmarkRuns, Shown};
 use crate::board::{self, Board};
 use crate::briefs::Briefs;
+use crate::by_hand::{HandRefusal, HandTaken};
 use crate::clock::Clock;
 use crate::domain::{Number, Snapshot, Timestamp};
 use crate::drain::{Asked, Exiting, Stop, Taken, Was};
@@ -265,6 +267,7 @@ pub struct Publish {
     pub served: watch::Sender<Option<Served>>,
     pub polling: watch::Sender<Option<Polling>>,
     pub environment: EnvironmentPublish,
+    pub automations: AutomationsPublish,
     pub benchmark_runs: BenchmarkRunsPublish,
 }
 
@@ -273,6 +276,7 @@ pub struct Links {
     pub served: watch::Receiver<Option<Served>>,
     pub polling: watch::Receiver<Option<Polling>>,
     pub environment: EnvironmentLink,
+    pub automations: AutomationsLink,
     pub benchmark_runs: BenchmarkRunsLink,
 }
 
@@ -282,18 +286,21 @@ impl Publish {
         let (served, served_from) = watch::channel(None);
         let (polling, polling_from) = watch::channel(None);
         let (environment, environment_link) = EnvironmentPublish::new();
+        let (automations, automations_link) = AutomationsPublish::new();
         let (benchmark_runs, benchmark_runs_link) = BenchmarkRunsPublish::new();
         (
             Publish {
                 served,
                 polling,
                 environment,
+                automations,
                 benchmark_runs,
             },
             Links {
                 served: served_from,
                 polling: polling_from,
                 environment: environment_link,
+                automations: automations_link,
                 benchmark_runs: benchmark_runs_link,
             },
         )
@@ -377,6 +384,54 @@ impl Default for BenchmarkRunsLink {
     }
 }
 
+/// A request by hand for an automation's run, answered once `serve` has
+/// taken it.
+pub type HandAsked = (
+    AutomationName,
+    oneshot::Sender<Result<HandTaken, HandRefusal>>,
+);
+
+/// `serve`'s end of [`AutomationsLink`].
+pub struct AutomationsPublish {
+    pub asked: tokio::sync::Mutex<mpsc::UnboundedReceiver<HandAsked>>,
+}
+
+impl AutomationsPublish {
+    fn new() -> (AutomationsPublish, AutomationsLink) {
+        let (ask, asked) = mpsc::unbounded_channel();
+        (
+            AutomationsPublish {
+                asked: tokio::sync::Mutex::new(asked),
+            },
+            AutomationsLink { ask },
+        )
+    }
+}
+
+/// How the local API asks `serve` to run an automation by hand.
+#[derive(Clone)]
+pub struct AutomationsLink {
+    ask: mpsc::UnboundedSender<HandAsked>,
+}
+
+impl AutomationsLink {
+    /// Asks `serve` to run the automation `name` by hand, and gives its
+    /// answer once it has taken or refused the request: `None` when `serve`
+    /// exits first.
+    pub async fn ask(&self, name: AutomationName) -> Option<Result<HandTaken, HandRefusal>> {
+        let (reply, taken) = oneshot::channel();
+        self.ask.send((name, reply)).ok()?;
+        taken.await.ok()
+    }
+}
+
+/// Linked to no `serve`: a request is not taken.
+impl Default for AutomationsLink {
+    fn default() -> AutomationsLink {
+        AutomationsPublish::new().1
+    }
+}
+
 /// A rebuild asked of `serve`, answered once taken.
 pub type RebuildAsked = oneshot::Sender<RebuildTaken>;
 
@@ -445,6 +500,7 @@ pub struct Sources {
     /// What a drain asked for goes through.
     pub ends: Ends,
     pub environment: EnvironmentLink,
+    pub automations: AutomationsLink,
     pub benchmark_runs: BenchmarkRunsLink,
     /// What `serve` waits for before it exits.
     pub exiting: watch::Receiver<Vec<Remaining>>,
@@ -463,6 +519,7 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/environment/follow", get(follow_environment))
         .route("/environment/rebuild", post(take_rebuild))
         .route("/environment/rebuild/{build}", get(answer_rebuild))
+        .route("/automations/{name}/run", post(take_run_by_hand))
         .route("/benchmark-runs/changed", post(take_benchmark_runs_changed))
         .route("/benchmark-runs/{id}", get(answer_benchmark_run))
         .route("/drain", post(take_drain))
@@ -705,6 +762,27 @@ async fn take_rebuild(State(sources): State<Sources>) -> Response {
         Err(_) => error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "`serve` exited before it took the rebuild",
+        ),
+    }
+}
+
+/// Answers once `serve` has taken the request by hand for the automation
+/// `name`, with a conflict when it refused it, an unknown automation
+/// included, and a bad request when `name` is no automation's name.
+async fn take_run_by_hand(
+    State(sources): State<Sources>,
+    Resource(name): Resource<String>,
+) -> Response {
+    let name: AutomationName = match name.parse() {
+        Ok(name) => name,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, &e),
+    };
+    match sources.automations.ask(name).await {
+        Some(Err(refusal)) => error_response(StatusCode::CONFLICT, &refusal.to_string()),
+        Some(Ok(taken)) => json_response(StatusCode::OK, &taken),
+        None => error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "`serve` took no request: it is exiting",
         ),
     }
 }
