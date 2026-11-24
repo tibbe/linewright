@@ -3,24 +3,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::TimeDelta;
-use linewright_core::benchmarks::Benchmarks;
-use linewright_core::clock::RunningFrom;
+use linewright_core::clock::{Clock, RunningFrom};
 use linewright_core::domain::{MergeMethod, Number, Scope, Windows, label};
 use linewright_core::git::CommitId;
 use linewright_core::input;
-use linewright_core::name::Name;
 use linewright_core::reconcile::Work;
 use linewright_core::spec_gap;
 use linewright_core::store::local::LocalStore;
 use linewright_core::store::{NewIssue, NewPull, Store};
-use linewright_core::task::{
-    self, BenchmarkChoice, Criteria, Merge, Task, TaskItemKind, TaskPart, TaskPull, TaskPullState,
-};
+use linewright_core::task::{Merge, Task, TaskItemKind, TaskPart, TaskPull, TaskPullState};
 use linewright_core::testing::*;
 
 /// A design run on the first ticket of a spec change cut into tickets,
 /// given its parent, its spec change and an open spec gap filed for it,
-/// captured as a task.
+/// written as the task a capture of it leaves.
 struct DesignTask {
     world: World,
     dir: PathBuf,
@@ -31,7 +27,7 @@ struct DesignTask {
 }
 
 async fn design_task() -> DesignTask {
-    let mut world = World::new().await;
+    let world = World::new().await;
     let cut = world.spec_change_cut_into_tickets().await;
     let ticket = cut.tickets[0];
     let spec_change = world.issue(ticket).parent.and_then(|p| p.spec_change);
@@ -54,22 +50,18 @@ async fn design_task() -> DesignTask {
         .remove_label(ticket, "linewright:designed")
         .await;
     ok(unlabeled, "unlabeling");
-    design_issues(&world);
-    world.poll().await;
-    let work = world.dir.path().join("work");
-    let name: Name = ok("design".parse(), "the name");
-    let run = ok(format!("{}/design-1", ticket.0).parse(), "the run's ID");
-    let runs = runs_in(&work).await;
-    let benchmarks = Benchmarks::new(runs.database().clone());
-    let benchmark = BenchmarkChoice::New(ok("designs".parse(), "the suite"));
-    let capturable = task::capturable(&runs, &benchmarks, &run, &name, &benchmark).await;
-    let capturable = ok(capturable, "the run");
-    let criteria = ok(
-        Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),
-        "the criteria",
-    );
-    let dir = task::capture(&*world.store, capturable, &criteria, &benchmarks).await;
-    let dir = ok(dir, "capturing").dir;
+    ok(world.store.assign(ticket).await, "claiming");
+    let dir = world.dir.path().join("task");
+    keep_task_dir(
+        &dir,
+        &world.store,
+        &format!("{}/design-1", ticket.0),
+        world.clock.now(),
+        &[ticket, cut.tracking, spec_change, gap],
+        &["main"],
+        "The design cuts the work in two.\n",
+    )
+    .await;
     DesignTask {
         world,
         dir,
