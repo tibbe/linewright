@@ -216,6 +216,30 @@ fn followed_from(html: &Html) -> Option<String> {
     attributes(html, "#stream[hx-sse\\:connect]", "hx-sse:connect").pop()
 }
 
+/// The stream at `followed`, a page's, following its run from the run's
+/// first line rather than after the last line the page showed. Panics
+/// unless `followed` is a path with a `follow` parameter.
+#[track_caller]
+fn from_the_start(followed: &str) -> String {
+    let mut url = reqwest::Url::parse("https://serve-fake/")
+        .and_then(|base| base.join(followed))
+        .unwrap_or_else(|e| panic!("{followed}: {e}"));
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(name, value)| {
+            let value = if name == "follow" {
+                "start".into()
+            } else {
+                value
+            };
+            (name.into_owned(), value.into_owned())
+        })
+        .collect();
+    assert!(pairs.iter().any(|(name, _)| name == "follow"), "{followed}");
+    url.query_pairs_mut().clear().extend_pairs(pairs);
+    format!("{}?{}", url.path(), url.query().unwrap_or_default())
+}
+
 /// The link `html` has to an implement run.
 fn implement_run(html: &Html) -> Option<String> {
     runs(html).into_iter().find(|run| run.contains("implement"))
@@ -240,7 +264,7 @@ fn times(html: &Html) -> Vec<String> {
 }
 
 #[test_log::test(tokio::test)]
-async fn serve_fake_serves_the_seeds_board_and_its_runs_in_flight_go_on_live_over_https() {
+async fn serve_fake_serves_the_seeds_board_and_streams_its_runs_in_flight_over_https() {
     let served = Served::start().await;
     assert!(
         served.url.starts_with("https://127.0.0.1:") && served.url.ends_with('/'),
@@ -264,9 +288,10 @@ async fn serve_fake_serves_the_seeds_board_and_its_runs_in_flight_go_on_live_ove
         .eventually_page(&run, |html| followed_from(html).is_some())
         .await;
     served
-        .first_event(&followed_from(&page).expect("followed"), |event| {
-            event.contains("entry")
-        })
+        .first_event(
+            &from_the_start(&followed_from(&page).expect("followed")),
+            |event| event.contains("entry"),
+        )
         .await;
 
     served.stop().await;

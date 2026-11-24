@@ -39,8 +39,7 @@ const DESIGNER: &str = "designer";
 /// How long the fake agent takes over each step of a triage or a design.
 const BRISK_MILLIS: u64 = 1000;
 
-/// How long it takes over each step of an implement session, which keeps it
-/// in flight the longest of the seed's sessions.
+/// How long it takes over each step of an implement session.
 const STEADY_MILLIS: u64 = 3000;
 
 /// The repository's settings: a setup command.
@@ -884,6 +883,9 @@ fn designing() -> Vec<Step> {
     steps
 }
 
+/// The implement session: its events, [`STEADY_MILLIS`] apart, and then a
+/// hold, so that its run stays in flight until serve-fake stops or the
+/// session times out.
 fn implementing() -> Vec<Step> {
     let reading = [
         thinking("The ticket asks for the session's duration at the heading's right."),
@@ -928,16 +930,7 @@ fn implementing() -> Vec<Step> {
         ]
     });
     let mut steps = session(STEADY_MILLIS, reading.into_iter().chain(testing).collect());
-    steps.push(Step::Commit {
-        path: "src/run_page.rs".into(),
-        contents: "fn heading(session: &Session) -> Markup { duration(session) }\n".into(),
-        message: "End a session's heading with its duration".into(),
-    });
-    steps.push(finished(&json!({
-        "outcome": "done",
-        "pr_title": "End a session's heading with its duration",
-        "pr_body": "The heading now ends with how long the session took.",
-    })));
+    steps.push(Step::Hold);
     steps
 }
 
