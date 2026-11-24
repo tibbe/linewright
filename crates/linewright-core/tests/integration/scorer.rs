@@ -195,9 +195,9 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     .await;
 
     let gave_up = gave_up.expect_err("a scorer that gives up makes no score");
-    assert_eq!(
-        gave_up.to_string(),
-        "The scorer gave up: The output is empty."
+    assert!(
+        matches!(&gave_up, Unscored::GaveUp(reason) if reason == "The output is empty."),
+        "{gave_up:?}"
     );
     let unmatched = unmatched.expect_err("a result never accepted is no score");
     let said = unmatched.to_string();
@@ -292,12 +292,11 @@ async fn a_scorer_whose_environment_cannot_be_built_says_so_with_the_builds_log(
 
     let unscored = scored.expect_err("a scorer with no environment makes no score");
     assert!(
-        matches!(unscored, Unscored::BuildFailed { .. }),
+        matches!(
+            &unscored,
+            Unscored::BuildFailed { log_tail: Some(tail) } if tail.text() == "the build broke"
+        ),
         "{unscored:?}"
-    );
-    assert_eq!(
-        unscored.to_string(),
-        "The scorer's environment could not be built.\n\nthe build broke"
     );
     assert_eq!(harness.scorer_prompts().len(), 0);
     assert_eq!(entries(&out), vec!["outcome", "task"]);

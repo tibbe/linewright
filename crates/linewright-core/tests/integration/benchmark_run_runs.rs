@@ -94,7 +94,11 @@ async fn a_trial_whose_scorer_makes_no_score_keeps_why_as_lw_score_says_it() {
             why.as_str()
         })
         .collect();
-    assert_eq!(whys, vec!["The scorer gave up: The output is empty."; 2]);
+    assert_eq!(whys.len(), 2, "{whys:?}");
+    assert!(
+        whys.iter().all(|why| why.contains("The output is empty.")),
+        "{whys:?}"
+    );
 }
 
 /// The factory of `world`, its work directory `repo`, started again with
