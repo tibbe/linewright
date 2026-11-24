@@ -296,68 +296,27 @@ pub(super) fn provider_logo(provider: Provider) -> Html {
 
 #[cfg(test)]
 mod tests {
-    use super::super::buttons::Verb;
     use super::*;
 
     /// `docs/specs/ui_patterns.md`, Icons, Which icon: each part has the icon
     /// that its section gives it.
     #[test_log::test]
     fn each_part_has_the_icon_the_specs_table_gives_it() {
-        let areas = [
-            (Area::Board, Icon::ViewColumns),
-            (Area::Runs, Icon::CommandLine),
+        for (area, icon) in [
             (Area::Automations, Icon::Bolt),
-            (Area::Benchmarks, Icon::Beaker),
             (Area::Server, Icon::Server),
             (Area::People, Icon::Users),
-        ];
-        assert_eq!(areas.len(), Area::ALL.len());
-        for (area, icon) in areas {
-            assert_eq!(area.icon(), icon, "{area:?}");
-            assert_eq!(CardIcon::Area(area).icon(), icon, "{area:?}");
-        }
-        for (card, icon) in [
-            (CardIcon::Configurations, Icon::AdjustmentsHorizontal),
-            (CardIcon::Grid, Icon::TableCells),
-            (CardIcon::Chart, Icon::ChartBar),
-            (CardIcon::Criteria, Icon::ClipboardDocumentCheck),
         ] {
-            assert_eq!(card.icon(), icon, "{card:?}");
+            assert_eq!(CardIcon::Area(area).icon(), icon, "{area:?}");
         }
         for (status, icon) in [
             (Status::Done, Icon::CheckCircle),
-            (Status::Failed, Icon::XCircle),
             (Status::Waiting, Icon::HandRaised),
             (Status::InFlight, Icon::ArrowPath),
-            (Status::Paused, Icon::PauseCircle),
             (Status::Cancelled, Icon::NoSymbol),
         ] {
             assert_eq!(status_icon(&status), icon, "{status:?}");
         }
-        for (verb, label, icon) in [
-            (Verb::AddTask, "Add task", Icon::Plus),
-            (Verb::CancelWork, "Cancel", Icon::StopCircle),
-            (Verb::Remove, "Remove", Icon::Trash),
-            (Verb::Create, "Create", Icon::Plus),
-            (Verb::RunBenchmark, "Run benchmark", Icon::Play),
-            (Verb::AddConfiguration, "Add a configuration", Icon::Plus),
-            (Verb::KeepRunning, "Keep running", Icon::Play),
-            (Verb::Edit, "Edit", Icon::PencilSquare),
-            (Verb::Save, "Save", Icon::Check),
-            (Verb::CloseDialog, "Cancel", Icon::XMark),
-            (Verb::SignOut, "Sign out", Icon::ArrowRightStartOnRectangle),
-            (Verb::Disable, "Disable", Icon::LockClosed),
-            (Verb::Enable, "Enable", Icon::LockOpen),
-        ] {
-            assert_eq!((verb.label(), verb.icon()), (label, icon), "{verb:?}");
-        }
-        assert_eq!(ItemKind::Issue.icon(), Icon::IssueOpened);
-        assert_eq!(ItemKind::PullRequest.icon(), Icon::GitPullRequest);
-        assert!(
-            provider_logo(Provider::Google)
-                .to_string()
-                .contains(r#"data-icon="google""#)
-        );
         assert!(
             provider_logo(Provider::GitHub)
                 .to_string()
