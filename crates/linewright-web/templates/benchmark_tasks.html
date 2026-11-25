@@ -1,13 +1,14 @@
 {%- import "macros.html" as ui -%}
 <div id="tasks">
-{%- if tasks.is_empty() %}
-<p class="px-4 pb-4">No tasks</p>
-{%- else %}
+{%- match tasks %}
+{%- when crate::table::TableRows::Empty(no_rows) %}
+{{ no_rows }}
+{%- when crate::table::TableRows::Rows(rows) %}
 <div class="overflow-x-auto">
 <table class="table">
 <thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
-{%- for task in tasks %}
+{%- for task in rows %}
 <tr>
 {%- for column in TasksColumn::ALL %}
 {%- match column %}
@@ -35,5 +36,5 @@
 {%- if let Some(pages) = tasks_nav %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}
-{%- endif %}
+{%- endmatch %}
 </div>

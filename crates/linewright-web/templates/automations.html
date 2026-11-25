@@ -12,14 +12,15 @@
 {%- endif %}
 {%- call(part) ui::table_card("Automations", None::<crate::icons::CardIcon>, shows_name = false) %}
 {%- if part == crate::table::Part::Table %}
-{%- if automations.rows.is_empty() %}
-<p class="px-4 pb-4">No automations</p>
-{%- else %}
+{%- match automations.rows %}
+{%- when crate::table::TableRows::Empty(no_rows) %}
+{{ no_rows }}
+{%- when crate::table::TableRows::Rows(rows) %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
 <thead><tr>{% for column in AutomationsColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
-{%- for row in automations.rows %}
+{%- for row in rows %}
 <tr>
 {%- for column in AutomationsColumn::ALL %}
 {%- match column %}
@@ -48,7 +49,7 @@
 {%- if let Some(pages) = automations.pages %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}
-{%- endif %}
+{%- endmatch %}
 {%- endif %}
 {%- endcall %}
 </section>
