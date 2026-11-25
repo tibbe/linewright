@@ -630,6 +630,7 @@ async fn a_resolved_thread_reads_back_resolved(sandbox: Sandbox) -> Result<()> {
     let Opened { pr, .. } = opened(&sandbox, what).await?;
     let path = added(&sandbox, what);
     let id = sandbox.start_thread(pr, &path, "Is this needed?").await?;
+    let before = sandbox.store().pull(pr).await?.updated_at;
     sandbox.tick().await;
 
     sandbox.store().resolve_thread(pr, &id).await?;
@@ -638,7 +639,11 @@ async fn a_resolved_thread_reads_back_resolved(sandbox: Sandbox) -> Result<()> {
         equal("whether it is resolved", &thread.resolved, &true)
     })
     .await?;
-    Ok(())
+    equal(
+        "when it was last updated, once resolved",
+        &sandbox.store().pull(pr).await?.updated_at,
+        &before,
+    )
 }
 
 async fn the_failures_of_the_checks_asked_for_hold_their_failed_steps_output(
@@ -735,8 +740,6 @@ async fn every_write_to_a_pull_request_moves_when_it_was_last_updated(
     written("a thread").await;
     store.reply_in_thread(pr, &thread, "Because.").await?;
     written("a reply").await;
-    store.resolve_thread(pr, &thread).await?;
-    written("a resolved thread").await;
     store
         .request_review(pr, std::slice::from_ref(&owner))
         .await?;

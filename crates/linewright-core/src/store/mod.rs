@@ -645,6 +645,9 @@ pub trait Store: Send + Sync {
     /// Linewright, if its head is still the commit `head`.
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()>;
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()>;
+    /// Resolves the review thread `thread` of the pull request. It doesn't
+    /// move when the pull request was last updated, as GitHub doesn't. Fails
+    /// when there is no such pull request or thread.
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()>;
 
     /// Each issue or pull request of `numbers` as GitHub's REST API gives it,
