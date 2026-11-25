@@ -1836,6 +1836,21 @@ async fn automation_run_during_a_drain_exits_1_saying_serve_is_draining() {
 }
 
 #[test_log::test(tokio::test)]
+async fn automation_run_before_serves_first_poll_exits_1_saying_why() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let serve = crate::fake_serve::FakeServe::over(work_dir.path()).await;
+
+    let output = serve.lw(&["automation", "run", "weekly.md"]).await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert_eq!(
+        output.stderr,
+        "lw: `serve` can't run an automation before its first poll has listed the automations\n"
+    );
+    serve.stop().await;
+}
+
+#[test_log::test(tokio::test)]
 async fn automation_run_without_serve_running_exits_3_saying_so() {
     let runtime_dir = tempfile::tempdir().unwrap();
 

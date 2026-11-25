@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::automation::{Automation, AutomationFiles, AutomationName};
+use crate::automation::{Automation, AutomationListing, AutomationName};
 use crate::phrase::Phrase;
 use crate::reconcile::{HandWait, Wait};
 use crate::repo_files::FileError;
@@ -29,6 +29,10 @@ pub enum HandTaken {
 pub enum HandRefusal {
     #[error("`serve` is draining: it takes no request to run an automation")]
     Draining,
+    #[error("`serve` can't run an automation before its first poll has listed the automations")]
+    BeforeFirstPoll,
+    #[error("`serve`'s latest poll could not list the automations: {why}")]
+    Unlisted { why: String },
     #[error("there is no automation `{name}`: the default branch has no {path}", path = .name.path())]
     NoSuchAutomation { name: AutomationName },
     #[error("{} does not parse: {}", .0.path, .0.error)]
@@ -36,22 +40,25 @@ pub enum HandRefusal {
 }
 
 /// Whether `serve` takes a request by hand for `name`, `draining` or not,
-/// by the automation files the last poll listed, `listed`, if it could list
-/// them: the automation to run, `None` when they were not listed, or why
-/// `serve` refuses it.
+/// by what its latest poll knew of the automation files, `listing`: the
+/// automation to run, or why `serve` refuses it.
 pub fn take<'a>(
     name: &AutomationName,
     draining: bool,
-    listed: Option<&'a AutomationFiles>,
-) -> Result<Option<&'a Automation>, HandRefusal> {
+    listing: &'a AutomationListing,
+) -> Result<&'a Automation, HandRefusal> {
     if draining {
         return Err(HandRefusal::Draining);
     }
-    let Some(files) = listed else {
-        return Ok(None);
+    let files = match listing {
+        AutomationListing::NotYet => return Err(HandRefusal::BeforeFirstPoll),
+        AutomationListing::Unlisted { why, .. } => {
+            return Err(HandRefusal::Unlisted { why: why.clone() });
+        }
+        AutomationListing::Listed(files) => files,
     };
     if let Some(automation) = files.parsed.iter().find(|a| a.name == *name) {
-        return Ok(Some(automation));
+        return Ok(automation);
     }
     let path = name.path();
     Err(match files.unparsed.iter().find(|file| file.path == path) {

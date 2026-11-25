@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use clap::{CommandFactory, Parser};
-use linewright_core::by_hand::HandTaken;
+use linewright_core::by_hand::{HandRefusal, HandTaken};
 use linewright_core::config::Cli;
 use linewright_core::harness::SessionError;
 use linewright_core::reconcile::HandWait;
@@ -337,4 +337,86 @@ async fn a_restart_forgets_a_request_whose_run_has_not_started() {
         .map(|run| run.id.to_string())
         .collect();
     assert_eq!(runs, ["weekly.md/1"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_request_after_a_poll_that_could_not_list_the_automations_is_refused_saying_why() {
+    let mut world = with_automation("weekly.md", WEEKLY).await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    world
+        .store
+        .fail_listing(".linewright/automations", "GitHub answered 502");
+    world.poll().await;
+
+    let refused = world.run_by_hand("weekly.md").await.unwrap_err();
+
+    assert_eq!(
+        refused,
+        HandRefusal::Unlisted {
+            why: "GitHub answered 502".into()
+        }
+    );
+    world.store.restore_listing(".linewright/automations");
+    world.poll().await;
+    assert_eq!(
+        world.run_by_hand("weekly.md").await,
+        Ok(HandTaken::Started {
+            run: "weekly.md/1".parse().unwrap()
+        })
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_request_after_a_poll_that_failed_before_it_listed_the_automations_is_refused() {
+    let mut world = with_automation("weekly.md", WEEKLY).await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    world.store.fail_reads("bad credentials");
+    world.factory.cycle().await.unwrap_err();
+    world.store.restore_reads();
+
+    let refused = world.run_by_hand("weekly.md").await.unwrap_err();
+
+    assert_eq!(
+        refused,
+        HandRefusal::Unlisted {
+            why: "taking a snapshot: bad credentials".into()
+        }
+    );
+    world.poll().await;
+    assert_eq!(
+        world.run_by_hand("weekly.md").await,
+        Ok(HandTaken::Started {
+            run: "weekly.md/1".parse().unwrap()
+        })
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_poll_that_fails_before_it_lists_the_automations_leaves_them_shown() {
+    let World {
+        store,
+        factory,
+        dir,
+        ..
+    } = with_automation("weekly.md", WEEKLY).await;
+    let serving = Serving::start(
+        factory,
+        std::time::Duration::from_millis(100),
+        linewright_core::webhook::Pending::default(),
+    );
+    eventually(|| serving.served.borrow().is_some()).await;
+    store.fail_reads("GitHub is down");
+    eventually(|| serving.failed_polls().is_some()).await;
+
+    let view = serving.served.borrow().as_ref().unwrap().view();
+
+    let shown: Vec<String> = view
+        .automations
+        .parsed
+        .iter()
+        .map(|automation| automation.name.to_string())
+        .collect();
+    assert_eq!(shown, ["weekly.md"]);
+    serving.stop().await;
+    drop(dir);
 }

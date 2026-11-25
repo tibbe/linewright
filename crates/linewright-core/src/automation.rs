@@ -229,6 +229,43 @@ pub struct AutomationFiles {
     pub unparsed: Vec<Unparsed>,
 }
 
+/// What `serve` knows of the automation files after its latest poll.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum AutomationListing {
+    /// No poll has ended.
+    #[default]
+    NotYet,
+    /// The latest poll listed them.
+    Listed(AutomationFiles),
+    /// The latest poll could not list them: `why`, redacted. `last` is
+    /// what an earlier poll listed when the latest failed before it came
+    /// to list them, which [`AutomationListing::files`] goes on giving.
+    Unlisted {
+        why: String,
+        last: Option<AutomationFiles>,
+    },
+}
+
+impl AutomationListing {
+    /// The files `serve` goes by between polls: those the latest poll
+    /// listed, or those an earlier poll did when the latest failed before
+    /// it came to list them.
+    pub fn files(&self) -> Option<&AutomationFiles> {
+        match self {
+            AutomationListing::Listed(files)
+            | AutomationListing::Unlisted {
+                last: Some(files), ..
+            } => Some(files),
+            AutomationListing::NotYet | AutomationListing::Unlisted { last: None, .. } => None,
+        }
+    }
+
+    /// The automations that parsed of [`AutomationListing::files`].
+    pub fn parsed(&self) -> &[Automation] {
+        self.files().map_or(&[], |files| &files.parsed)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unparsed {
     pub path: String,

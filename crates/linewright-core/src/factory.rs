@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 
 use crate::api::{Publish, Served};
 use crate::apply;
-use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
+use crate::automation::{self, Automation, AutomationListing, AutomationName, LastScheduledRuns};
 use crate::benchmark_runs::plan::Gate;
 use crate::benchmark_runs::runner::BenchmarkRunsRunner;
 use crate::benchmarks::BenchmarkRuns;
@@ -184,7 +184,8 @@ pub struct Factory {
     triggers_seen: TriggersSeen,
     /// The completed attempts of workflow runs read and kept.
     attempts: Attempts,
-    automation_files: AutomationFiles,
+    /// What the latest poll knew of the automation files.
+    listing: AutomationListing,
     memory: Memory,
     pull_records_file: PullRecordsFile,
     environment: Environment,
@@ -200,8 +201,6 @@ pub struct Factory {
     /// only in memory: a restart forgets them
     /// (`docs/specs/automations.md`, A request after a restart).
     asked_by_hand: BTreeSet<AutomationName>,
-    /// Whether the last poll that read the automation files listed them.
-    automations_listed: bool,
 }
 
 /// What the holds over benchmark runs' steps are taken from: the last
@@ -381,7 +380,7 @@ impl Factory {
             last_scheduled_runs,
             triggers_seen,
             attempts,
-            automation_files: AutomationFiles::default(),
+            listing: AutomationListing::NotYet,
             pull_records_file,
             environment,
             kept: None,
@@ -389,7 +388,6 @@ impl Factory {
             pushed_branches,
             labeled_old_tracking_issues: false,
             asked_by_hand: BTreeSet::new(),
-            automations_listed: false,
         })
     }
 
@@ -432,6 +430,37 @@ impl Factory {
 
     /// [`Factory::poll`]'s, with what it decided.
     async fn poll_deciding(&mut self, now: Timestamp) -> Result<Decisions> {
+        let kept = match self.poll_reading(now).await {
+            Ok(kept) => kept,
+            Err(e) => {
+                self.listing = AutomationListing::Unlisted {
+                    why: self.redacted(&e),
+                    last: self.listing.files().cloned(),
+                };
+                return Err(e);
+            }
+        };
+        self.list_automations().await;
+        let pruning = self
+            .listing
+            .files()
+            .is_some_and(|files| files.unparsed.is_empty());
+        let defined = self.listing.parsed().to_vec();
+        self.read_attempts(&defined, pruning, now).await;
+        Ok(self.reconcile(kept, defined, now).await)
+    }
+
+    /// `error` as it may be shown: its chain, with the secrets redacted.
+    fn redacted(&self, error: &anyhow::Error) -> String {
+        self.shell
+            .sessions
+            .secrets
+            .redaction()
+            .apply(&format!("{error:#}"))
+    }
+
+    /// What a poll started at `now` reads before it lists the automations.
+    async fn poll_reading(&mut self, now: Timestamp) -> Result<Kept> {
         let shell = &self.shell;
         let windows = shell.policy.windows(now);
         self.adopt_pushed_branches(now)
@@ -454,17 +483,12 @@ impl Factory {
         let repo = self.read_repo_files().await?;
         self.poll_environment(&repo).await;
         self.written.clear();
-        let kept = Kept {
+        Ok(Kept {
             snapshot: Arc::new(snapshot),
             taken_at: now,
             read_at: HashMap::new(),
             repo,
-        };
-        let defined = self.automations().await;
-        let pruning = defined.is_some() && self.automation_files.unparsed.is_empty();
-        let defined = defined.unwrap_or_default();
-        self.read_attempts(&defined, pruning, now).await;
-        Ok(self.reconcile(kept, defined, now).await)
+        })
     }
 
     /// The items Linewright changed are read before `subjects` are resolved:
@@ -492,8 +516,8 @@ impl Factory {
         let now = self.shell.sessions.clock.now();
         let subjects: Vec<webhook::Subject> = subjects.into_iter().map(Into::into).collect();
         let defined: Vec<Automation> = if subjects.contains(&webhook::Subject::WorkflowRuns) {
-            self.automation_files
-                .parsed
+            self.listing
+                .parsed()
                 .iter()
                 .filter(|automation| automation.on_workflow_runs())
                 .cloned()
@@ -621,12 +645,7 @@ impl Factory {
             let poll = match self.poll(started).await {
                 Ok(_) => Poll::Succeeded,
                 Err(e) => {
-                    let error = self
-                        .shell
-                        .sessions
-                        .secrets
-                        .redaction()
-                        .apply(&format!("{e:#}"));
+                    let error = self.redacted(&e);
                     error!(error, "poll failed");
                     Poll::Failed {
                         at: self.shell.sessions.clock.now(),
@@ -726,19 +745,12 @@ impl Factory {
     /// [`by_hand::take`] says. A request taken joins those waiting, a second
     /// for the same automation merging into the first, and Linewright
     /// reconciles at once: the answer names the run that started, or what
-    /// the run waits for. When the last poll could not list the automation
-    /// files, the request waits for the next poll that does.
+    /// the run waits for.
     pub async fn ask_by_hand(&mut self, name: AutomationName) -> Result<HandTaken, HandRefusal> {
         self.note_drain();
-        let listed = self.automations_listed.then_some(&self.automation_files);
-        let known = by_hand::take(&name, self.memory.drain.is_some(), listed)?.is_some();
+        by_hand::take(&name, self.memory.drain.is_some(), &self.listing)?;
         info!(automation = %name, "a run of the automation is asked for by hand");
         self.asked_by_hand.insert(name.clone());
-        if !known {
-            return Ok(HandTaken::Waiting {
-                waits_for: HandWait::NextPoll,
-            });
-        }
         let subjects: [webhook::Subject; 0] = [];
         let mut decided = match self.read_and_reconcile(subjects, true).await {
             Ok(decided) => decided,
@@ -830,7 +842,7 @@ impl Factory {
             memory: self.memory.clone(),
             live,
             in_flight,
-            automations: self.automation_files.clone(),
+            automations: self.listing.files().cloned().unwrap_or_default(),
             last_scheduled_runs: self.last_scheduled_runs.clone(),
             unusable: kept.repo.unusable.clone(),
         })
@@ -958,8 +970,8 @@ impl Factory {
     /// When that poll listed the automation files, it forgets each request
     /// for an automation it did not parse, logging it.
     fn asked_automations(&mut self) -> BTreeMap<AutomationName, Automation> {
-        let parsed = &self.automation_files.parsed;
-        let listed = self.automations_listed;
+        let parsed = self.listing.parsed();
+        let listed = self.listing.files().is_some();
         let mut asked = BTreeMap::new();
         self.asked_by_hand.retain(|name| {
             match parsed.iter().find(|automation| automation.name == *name) {
@@ -1043,24 +1055,27 @@ impl Factory {
         Ok(Arc::new(repo))
     }
 
-    /// The automations defined, `None` when they cannot be listed.
-    async fn automations(&mut self) -> Option<Vec<Automation>> {
+    /// Lists the automations defined into [`Factory::listing`].
+    async fn list_automations(&mut self) {
         let branch = &self.shell.settings.default_branch;
         let read = automation::read(self.shell.sessions.store.as_ref(), branch).await;
-        let listed = read.is_ok();
-        self.automations_listed = listed;
-        self.automation_files = read.unwrap_or_else(|e| {
-            error!(error = format!("{e:#}"), "listing the automations failed");
-            AutomationFiles::default()
-        });
-        for file in &self.automation_files.unparsed {
-            warn!(
-                path = file.path,
-                error = file.reason,
-                "skipping an automation file"
-            );
+        self.listing = match read {
+            Ok(files) => AutomationListing::Listed(files),
+            Err(e) => {
+                let why = self.redacted(&e);
+                error!(error = why, "listing the automations failed");
+                AutomationListing::Unlisted { why, last: None }
+            }
+        };
+        if let Some(files) = self.listing.files() {
+            for file in &files.unparsed {
+                warn!(
+                    path = file.path,
+                    error = file.reason,
+                    "skipping an automation file"
+                );
+            }
         }
-        listed.then(|| self.automation_files.parsed.clone())
     }
 
     pub fn is_idle(&self) -> bool {
