@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 
 use linewright_core::actions::{self, ItemFactsScreen, ItemInView, RelatedScreen, Standing};
 use linewright_core::api::{Sources, Unexplained};
-use linewright_core::domain::{Number, Snapshot};
+use linewright_core::domain::{ItemKind, Number, Snapshot};
 use linewright_core::phrase::{Phrase, Status};
 use linewright_core::status;
 
@@ -16,10 +16,10 @@ use super::caller::Reader;
 use super::cards::{self, lane_head, line_html};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
-use super::icons::ItemKind;
-use super::names::Names;
+use super::icons::CardIcon;
+use super::names::Naming;
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
+use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::{ErrorPage, Page, events, nothing_there, render};
 
 /// #N's facts, ready for the page.
@@ -28,9 +28,9 @@ struct ItemShown {
 }
 
 impl ItemShown {
-    fn of(facts: &ItemFactsScreen, names: &Names) -> ItemShown {
+    fn of(facts: &ItemFactsScreen, naming: &Naming) -> ItemShown {
         ItemShown {
-            facts: shown_facts(facts, names),
+            facts: shown_facts(facts, naming),
         }
     }
 }
@@ -41,7 +41,7 @@ impl ItemShown {
 /// card; Cards, Issue or pull request).
 #[derive(Template)]
 #[template(
-    source = r#"{% if let Some(kind) = kind %}{{ kind.svg() }}{% endif %}{{ titled|safe }}"#,
+    source = r#"{% if let Some(kind) = kind %}{{ crate::icons::item_kind_svg(kind) }}{% endif %}{{ titled|safe }}"#,
     ext = "html"
 )]
 struct ItemName {
@@ -58,6 +58,7 @@ fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
                 .then(|| ItemKind::of(facts.pull_request)),
             titled: html::titled(facts.number, &facts.title, repo),
         }),
+        icon: Some(CardIcon::ViewColumns),
         state: None,
         line: Some(html::escape("as of ").then(&html::time(facts.last_read))),
     }
@@ -65,10 +66,10 @@ fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
 
 /// `facts` in the order the item page's table gives them, each while it is
 /// shown (`docs/specs/board.md`, Item), with the items its
-/// phrases name as `names` names them.
-fn shown_facts(facts: &ItemFactsScreen, names: &Names) -> Vec<Fact> {
-    let repo = names.repo();
-    let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, names));
+/// phrases name as `naming` names them.
+fn shown_facts(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Fact> {
+    let repo = naming.repo();
+    let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, naming));
     let fact = |label, lines: Vec<Vec<Piece>>| (!lines.is_empty()).then_some(Fact { label, lines });
     let items =
         |items: &[RelatedScreen]| items.iter().map(|item| vec![related(item, repo)]).collect();
@@ -86,7 +87,7 @@ fn shown_facts(facts: &ItemFactsScreen, names: &Names) -> Vec<Fact> {
     [
         Some(Fact {
             label: "State",
-            lines: vec![state(facts, names)],
+            lines: vec![state(facts, naming)],
         }),
         fact(
             "Waiting for",
@@ -112,7 +113,7 @@ fn shown_facts(facts: &ItemFactsScreen, names: &Names) -> Vec<Fact> {
 /// card status; for a tracking issue, its state, then when its lane
 /// finished, if it did; for an item Linewright leaves, its state, where it
 /// has one, then "Left alone" and why.
-fn state(facts: &ItemFactsScreen, names: &Names) -> Vec<Piece> {
+fn state(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Piece> {
     let mut pieces = vec![];
     let first = facts
         .state
@@ -120,13 +121,13 @@ fn state(facts: &ItemFactsScreen, names: &Names) -> Vec<Piece> {
     let lines: Vec<(Html, Option<Status>)> = match &facts.standing {
         Standing::Card { line, status, .. } => line
             .as_ref()
-            .map(|line| (line_html(line, names), status.map(cards::status)))
+            .map(|line| (line_html(line, naming.repo()), status.map(cards::status)))
             .into_iter()
             .collect(),
         Standing::Tracking { finished } => finished
             .map(|at| {
                 (
-                    html::phrase(&Phrase::from("finished ").time(at), names),
+                    html::phrase(&Phrase::from("finished ").time(at), naming),
                     None,
                 )
             })
@@ -134,7 +135,7 @@ fn state(facts: &ItemFactsScreen, names: &Names) -> Vec<Piece> {
             .collect(),
         Standing::LeftAlone { kept_out_by } => vec![
             (html::escape("Left alone"), None),
-            (html::phrase(kept_out_by, names), None),
+            (html::phrase(kept_out_by, naming), None),
         ],
     };
     for (line, status) in first.into_iter().chain(lines) {
@@ -192,7 +193,7 @@ struct ItemRegion<'a> {
 /// Item `number`'s page, with `thing` its heading or that it is missing.
 fn page(number: Number, thing: Thing, navigation: Navigation) -> Page {
     Page::new(
-        Place::Alone(Area::Board, thing),
+        Place::Alone(thing),
         format!("/events/items/{}", number.0),
         navigation,
     )
@@ -207,15 +208,15 @@ pub(super) async fn item_page(
     let frame = Frame::of(&permit, &sources).await;
     match actions::get_item(&permit, &sources, number).await {
         Ok((item, snapshot)) => {
-            let names = names(&sources, Some(&snapshot));
+            let naming = naming(&sources, Some(&snapshot));
             ItemPage {
                 page: page(
                     number,
-                    Thing::Found(heading(&item.facts, names.repo())),
+                    Thing::Found(heading(&item.facts, naming.repo())),
                     navigation,
                 ),
-                item: ItemShown::of(&item.facts, &names),
-                runs: RunsShown::of_item(&item.runs, number, &names),
+                item: ItemShown::of(&item.facts, &naming),
+                runs: RunsShown::of_item(&item.runs, number, &naming),
                 frame,
             }
             .into_response()
@@ -226,8 +227,11 @@ pub(super) async fn item_page(
 
 /// How the item page names items: with the titles of the snapshot its facts
 /// were answered from, or by number alone without one.
-fn names<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Names<'a> {
-    Names::of(&sources.work_dir.repo, snapshot)
+fn naming<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Naming<'a> {
+    Naming::Titled {
+        repo: &sources.work_dir.repo,
+        snapshot,
+    }
 }
 
 fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigation) -> Response {
@@ -242,7 +246,10 @@ fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigat
     let page = ErrorPage {
         page: page(
             number,
-            Thing::Found(Heading::named(number.to_string())),
+            Thing::Found(Heading {
+                icon: Some(CardIcon::ViewColumns),
+                ..Heading::named(number.to_string())
+            }),
             navigation,
         ),
         frame,
@@ -269,12 +276,12 @@ pub(super) async fn item_events(
             let mut regions = vec![];
             let ItemInView { snapshot, facts } =
                 actions::item_in_view(&permit, &sources, number).await;
-            let names = names(&sources, snapshot.as_deref());
+            let naming = naming(&sources, snapshot.as_deref());
             if let Some(facts) = facts {
-                let item = ItemShown::of(&facts, &names);
+                let item = ItemShown::of(&facts, &naming);
                 let page = page(
                     number,
-                    Thing::Found(heading(&facts, names.repo())),
+                    Thing::Found(heading(&facts, naming.repo())),
                     navigation,
                 );
                 regions.extend(shell::regions(&frame, &page));
@@ -283,7 +290,7 @@ pub(super) async fn item_events(
                 regions.push(shell::holds(&frame));
             }
             let runs = actions::item_runs(&permit, &sources, number).await;
-            let runs = RunsShown::of_item(&runs, number, &names);
+            let runs = RunsShown::of_item(&runs, number, &naming);
             regions.push(("runs", render(&RunsRegion { runs: &runs })));
             regions
         }

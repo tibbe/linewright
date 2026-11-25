@@ -7,7 +7,7 @@
 {%- endfor %}
 </div>
 <div role="tabpanel" id="{{ BenchmarkTab::Runs.panel() }}" aria-labelledby="{{ BenchmarkTab::Runs.link_id() }}" class="pt-4"{% if !self.opens(BenchmarkTab::Runs) %} hidden{% endif %}>
-{%- call(part) ui::table_card("Runs", crate::icons::CardIcon::Area(crate::shell::Area::Runs), shows_name = false, buttons = true) %}
+{%- call(part) ui::table_card("Runs", None::<crate::icons::CardIcon>, shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::table::Part::Buttons %}
 {{ new_benchmark_run_offer }}
@@ -18,7 +18,7 @@
 {%- endcall %}
 </div>
 <div role="tabpanel" id="{{ BenchmarkTab::Tasks.panel() }}" aria-labelledby="{{ BenchmarkTab::Tasks.link_id() }}" class="pt-4"{% if !self.opens(BenchmarkTab::Tasks) %} hidden{% endif %}>
-{%- call(part) ui::table_card("Tasks", crate::icons::CardIcon::Area(crate::shell::Area::Benchmarks), shows_name = false, buttons = true) %}
+{%- call(part) ui::table_card("Tasks", None::<crate::icons::CardIcon>, shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::table::Part::Buttons %}
 {%- if frame.allows(linewright_core::actions::Action::AddTask) %}{% call ui::new_button(NEW_TASK) %}{% endcall %}{% endif %}

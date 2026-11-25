@@ -32,8 +32,9 @@ use super::caller::{Asking, Reader};
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
+use super::icons::CardIcon;
 use super::launch::counted;
-use super::names::Names;
+use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_page::{PageOf, RunQuery, Transcribed, transcript_events, transcript_page};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing, Within};
@@ -476,7 +477,13 @@ impl BenchmarkRunView {
                     ..paging
                 })
             }),
-            facts: facts(benchmark_run, &Names::of(&sources.work_dir.repo, None)),
+            facts: facts(
+                benchmark_run,
+                &Naming::Titled {
+                    repo: &sources.work_dir.repo,
+                    snapshot: None,
+                },
+            ),
             chart: [Axis::Cost, Axis::Time].map(|axis| plot(axis, &ranked)),
             rows: rows(permit, benchmark_run, &ranked[configurations_page.range()]),
             grid: grid(benchmark_run, &ranked, grid_page.range()),
@@ -486,7 +493,7 @@ impl BenchmarkRunView {
 
 /// The facts of `benchmark_run` (`docs/specs/benchmarks.md`, Benchmark
 /// run, Facts), each where the spec's table shows it.
-fn facts(benchmark_run: &BenchmarkRunScreen, names: &Names) -> Vec<Stat> {
+fn facts(benchmark_run: &BenchmarkRunScreen, naming: &Naming) -> Vec<Stat> {
     let results = &benchmark_run.results;
     let mut facts = vec![Stat {
         label: "Launched",
@@ -523,7 +530,7 @@ fn facts(benchmark_run: &BenchmarkRunScreen, names: &Names) -> Vec<Stat> {
     if let Shown::Waiting(waiting_for) = &benchmark_run.shown {
         facts.push(Stat {
             label: "Waiting for",
-            value: html::phrase(&waiting_for.phrase(), names),
+            value: html::phrase(&waiting_for.phrase(), naming),
         });
     }
     facts
@@ -934,6 +941,7 @@ impl BenchmarkRunView {
         navigation: Navigation,
     ) -> Page {
         let heading = Heading {
+            icon: Some(CardIcon::Beaker),
             state: Some((self.status, self.state)),
             ..Heading::named(benchmark_run_name(self.id))
         };
@@ -1086,7 +1094,10 @@ pub(super) async fn benchmark_run_page(
             if let Unshown::NoSuch = unshown {
                 return nothing_there(page, Missing::BenchmarkRun(id), frame, "benchmark-run");
             }
-            let page = page(Thing::Found(Heading::named(benchmark_run_name(&id))));
+            let page = page(Thing::Found(Heading {
+                icon: Some(CardIcon::Beaker),
+                ..Heading::named(benchmark_run_name(&id))
+            }));
             let (status, error) = unshown.answer(&id);
             let page = ErrorPage {
                 page,
@@ -1322,6 +1333,7 @@ async fn trial_transcript(
         |(shown, _)| shown.name.capitalized(),
     );
     let heading = Heading {
+        icon: Some(CardIcon::Beaker),
         line: found.as_ref().ok().map(|(shown, _)| context(shown)),
         ..Heading::named(format!("{named}'s {}", path.of))
     };

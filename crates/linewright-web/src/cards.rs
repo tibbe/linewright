@@ -6,12 +6,12 @@ use linewright_core::board::CardStatus;
 use linewright_core::phrase::{Phrase, Status};
 
 use super::html::{self, Html};
-use super::names::Names;
+use super::names::Naming;
 
-/// A card's line as HTML, the one place a page names items by their number
-/// alone (`docs/specs/board.md`, Naming items).
-pub(super) fn line_html(line: &Phrase, names: &Names) -> Html {
-    html::phrase(line, &names.numbers_only())
+/// A card's line as HTML, naming the items of the repo `repo` by their number
+/// alone (`docs/specs/board.md`, Cards, Its line).
+pub(super) fn line_html(line: &Phrase, repo: &str) -> Html {
+    html::phrase(line, &Naming::CardLine { repo })
 }
 
 /// A lane's head (`docs/specs/board.md`, Lanes, A lane and

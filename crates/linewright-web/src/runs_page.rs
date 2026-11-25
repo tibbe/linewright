@@ -20,7 +20,7 @@ use linewright_core::reconcile::WorkKind;
 use linewright_core::runs;
 
 use super::caller::Reader;
-use super::names::Names;
+use super::names::Naming;
 use super::pages::{PageHref, Requested};
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Area, Frame, Navigation, Place};
@@ -161,8 +161,11 @@ async fn listed(
     match actions::list_runs(permit, sources, &query, now).await {
         Ok(listing) => {
             let snapshot = actions::view_snapshot(permit, sources);
-            let names = Names::of(&sources.work_dir.repo, snapshot.as_deref());
-            let runs = RunsShown::all(&listing, &names, narrowing.page, |page| {
+            let naming = Naming::Titled {
+                repo: &sources.work_dir.repo,
+                snapshot: snapshot.as_deref(),
+            };
+            let runs = RunsShown::all(&listing, &naming, narrowing.page, |page| {
                 narrowing.href(page)
             });
             (StatusCode::OK, runs)

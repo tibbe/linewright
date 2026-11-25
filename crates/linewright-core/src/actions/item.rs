@@ -215,7 +215,7 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
                 .code(spec_glob.clone())
                 .text(", the spec-glob"),
             NotSpecChange::TakenUp { issue } => {
-                Phrase::from("a spec change taken up in ").item(*issue)
+                Phrase::from("a spec change taken up in ").issue(*issue)
             }
             NotSpecChange::Designed { label } => Phrase::from("a spec change labeled ")
                 .code(label.name())

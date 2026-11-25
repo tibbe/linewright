@@ -21,7 +21,7 @@ use linewright_core::status::{
 use super::caller::Reader;
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
-use super::names::Names;
+use super::names::Naming;
 use super::run_page::{Row, command_row, command_text, entry_row, output_html, status_html};
 use super::shell::{self, Area, Frame, Hold, Navigation, Place};
 use super::{Page, events, render};
@@ -207,16 +207,16 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 /// The frame and the facts, from one answer of `status`.
 async fn shown(permit: &Permit<Read>, sources: &Sources) -> (Frame, Vec<Fact>) {
     let read = actions::overview(permit, sources).await;
-    let names = shell::names(&read, &sources.work_dir.repo);
+    let naming = shell::naming(&read, &sources.work_dir.repo);
     let builds = read
         .server
         .builds
         .iter()
-        .map(|build| build_html(build, &names))
+        .map(|build| build_html(build, &naming))
         .collect();
     let facts = facts(&read.server.linewright, builds)
         .into_iter()
-        .map(|fact| fact.map(|phrase| html::phrase(&phrase, &names)))
+        .map(|fact| fact.map(|phrase| html::phrase(&phrase, &naming)))
         .collect();
     (Frame::of_read(permit, sources, &read), facts)
 }
@@ -225,8 +225,8 @@ async fn shown(permit: &Permit<Read>, sources: &Sources) -> (Frame, Vec<Fact>) {
 /// with its duration at the right, opening the same way, under a line
 /// saying when it started and from what, and with the output so far of a
 /// build in progress.
-fn build_html(build: &BuildShown, names: &Names) -> Html {
-    let heading = html::phrase(&shown::heading(build), names);
+fn build_html(build: &BuildShown, naming: &Naming) -> Html {
+    let heading = html::phrase(&shown::heading(build), naming);
     let record = &build.record;
     let command = &record.line.command;
     let line = match shown::account(build) {

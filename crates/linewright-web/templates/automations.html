@@ -10,7 +10,7 @@
 {%- endfor %}
 </ul>
 {%- endif %}
-{%- call(part) ui::table_card("Automations", crate::icons::CardIcon::Area(crate::shell::Area::Automations), shows_name = false) %}
+{%- call(part) ui::table_card("Automations", None::<crate::icons::CardIcon>, shows_name = false) %}
 {%- if part == crate::table::Part::Table %}
 {%- if automations.rows.is_empty() %}
 <p class="px-4 pb-4">No automations</p>

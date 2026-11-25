@@ -14,12 +14,12 @@
 </div>
 {%- include "benchmark_run_chart.html" %}
 </section>
-{%- call(part) ui::table_card("Configurations", crate::icons::CardIcon::Configurations, shows_name = true) %}
+{%- call(part) ui::table_card("Configurations", Some(crate::icons::CardIcon::Configurations), shows_name = true) %}
 {%- if part == crate::table::Part::Table %}
 {%- include "benchmark_run_configurations.html" %}
 {%- endif %}
 {%- endcall %}
-{%- call(part) ui::table_card("Passes by task", crate::icons::CardIcon::Grid, shows_name = true) %}
+{%- call(part) ui::table_card("Passes by task", Some(crate::icons::CardIcon::Grid), shows_name = true) %}
 {%- if part == crate::table::Part::Table %}
 {%- include "benchmark_run_grid.html" %}
 {%- endif %}

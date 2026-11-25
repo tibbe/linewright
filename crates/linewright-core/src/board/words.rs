@@ -38,7 +38,7 @@ fn worded(line: &CardLine) -> Phrase {
         )),
         CardLine::HandedBack => "handed back".into(),
         CardLine::DecisionNeeded => "decision needed".into(),
-        CardLine::BlockedBy(issue) => Phrase::from("blocked by ").item(*issue),
+        CardLine::BlockedBy(issue) => Phrase::from("blocked by ").issue(*issue),
         CardLine::AssignedTo(assignee) => format!("assigned to {assignee}").into(),
         CardLine::Unassigned => "unassigned".into(),
         CardLine::NotMarked => "not marked for Linewright".into(),
@@ -49,7 +49,7 @@ fn worded(line: &CardLine) -> Phrase {
             author,
             stops,
         } => {
-            let phrase = Phrase::default().item(*pull_request);
+            let phrase = Phrase::default().pull_request(*pull_request);
             let phrase = match author {
                 Some(author) => phrase.text(format!(" by {author}")),
                 None => phrase,

@@ -4,7 +4,7 @@ use linewright_core::domain::{Number, Timestamp};
 use linewright_core::phrase::{Phrase, Segment};
 
 use super::icons::{Icon, IconSize};
-use super::names::Names;
+use super::names::Naming;
 
 /// Markup with its text escaped, which a template may put in a page as it
 /// is. Only this module makes one, [`rendered`] from a template or
@@ -39,16 +39,16 @@ pub(crate) fn rendered(template: &impl askama::Template) -> Html {
     Html(super::render(template))
 }
 
-/// `phrase` as HTML (`docs/specs/board.md`, Naming items, and
-/// `docs/specs/ui_patterns.md`, Time): an item is named as `names` names it,
+/// `phrase` as HTML (`docs/specs/components.md`, Item name, and
+/// `docs/specs/ui_patterns.md`, Time): an item is named as `naming` names it,
 /// a time and a duration are `<time>` elements holding the text the commands
 /// print, and a label or a command is code.
-pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
+pub(crate) fn phrase(phrase: &Phrase, naming: &Naming) -> Html {
     let mut html = String::new();
     for segment in phrase.segments() {
         match segment {
             Segment::Text(text) => html.push_str(&escape(text).0),
-            Segment::Item(number) => html.push_str(&names.item(*number).0),
+            Segment::Item { number, kind } => html.push_str(&naming.item(*number, *kind).0),
             Segment::Time(at) => html.push_str(&time(*at).0),
             Segment::Duration { seconds, since } => {
                 html.push_str(&duration(None, *seconds, *since).0);

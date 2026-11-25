@@ -1,9 +1,9 @@
 //! A page's facts about one thing (`docs/specs/components.md`, Facts).
 
+use linewright_core::domain::ItemKind;
 use linewright_core::phrase::Status;
 
 use super::html::Html;
-use super::icons::ItemKind;
 
 /// A fact: its label, and its value a line at a time. `Words` is what its
 /// words are made of, `Html` as the page draws them.

@@ -17,7 +17,7 @@ use crate::automation::AutomationName;
 use crate::briefs::Briefs;
 use crate::cost::{RunCost, SessionCost, SessionSpend};
 use crate::database::Database;
-use crate::domain::{Number, Repo, Timestamp};
+use crate::domain::{ItemKind, Number, Repo, Timestamp};
 use crate::harness::{Purpose, Reported, Reporter};
 use crate::input::Input;
 use crate::layer::Layer;
@@ -687,7 +687,13 @@ impl RunInFlight {
 
 fn describe_of(of: &RunOf) -> Phrase {
     match of {
-        RunOf::Work { item, stage } => Phrase::from(*item).text(format!(" {}", stage.name())),
+        RunOf::Work { item, stage } => {
+            let named = match stage.item_kind() {
+                ItemKind::PullRequest => Phrase::default().pull_request(*item),
+                ItemKind::Issue => Phrase::default().issue(*item),
+            };
+            named.text(format!(" {}", stage.name()))
+        }
         RunOf::Automation { automation } => format!("automation {automation}").into(),
     }
 }

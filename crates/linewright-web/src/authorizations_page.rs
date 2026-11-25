@@ -20,7 +20,6 @@ use super::buttons::Verb;
 use super::caller::{Asking, Reader, Watch};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
-use super::icons::CardIcon;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Frame, Navigation, Place};
 use super::write::{Refused, Write};
@@ -143,7 +142,6 @@ fn page(requested: Requested, navigation: Navigation) -> Page {
     Page::new(
         Place::Account {
             name: "Authorizations",
-            icon: CardIcon::Authorizations,
         },
         with_filters("/events/authorizations", &[("page", &requested.field())]),
         navigation,

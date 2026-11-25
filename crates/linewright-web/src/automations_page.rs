@@ -16,7 +16,7 @@ use linewright_core::status;
 
 use super::caller::Reader;
 use super::html::{self, Html};
-use super::names::Names;
+use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column};
@@ -90,10 +90,10 @@ enum LastRunShown {
 impl AutomationsShown {
     fn of(
         automations: &AutomationsScreen,
-        names: &Names,
+        naming: &Naming,
         requested: Requested,
     ) -> AutomationsShown {
-        let html = |phrase: &Phrase| html::phrase(phrase, names);
+        let html = |phrase: &Phrase| html::phrase(phrase, naming);
         let pages = Pages::of(automations.automations.len(), requested);
         AutomationsShown {
             unparsed: automations
@@ -172,7 +172,7 @@ async fn shown(
     let automations = read.automations.as_ref().map(|automations| {
         AutomationsShown::of(
             automations,
-            &shell::names(&read, &sources.work_dir.repo),
+            &shell::naming(&read, &sources.work_dir.repo),
             requested,
         )
     });

@@ -9,7 +9,7 @@
 <div id="{{ SAID }}" class="max-w-xl shrink-0 empty:hidden" role="status"></div>
 {% block people -%}
 <section id="people" class="flex min-h-0 flex-1 flex-col">
-{%- call(part) ui::table_card("People", crate::icons::CardIcon::Area(crate::shell::Area::People), shows_name = false) %}
+{%- call(part) ui::table_card("People", None::<crate::icons::CardIcon>, shows_name = false) %}
 {%- if part == crate::table::Part::Table %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">

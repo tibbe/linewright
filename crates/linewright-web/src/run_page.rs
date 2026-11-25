@@ -36,8 +36,8 @@ use super::buttons::{ScreenButton, Verb};
 use super::caller::{Reader, Signed};
 use super::capture::{self, Offer};
 use super::html::{self, Html};
-use super::icons::{Icon, IconSize};
-use super::names::Names;
+use super::icons::{CardIcon, Icon, IconSize};
+use super::names::Naming;
 use super::runs_table::ItemCell;
 use super::shell::{self, Frame, Heading, Missing, Navigation, Thing};
 use super::{
@@ -1183,6 +1183,7 @@ fn run_heading(permit: &Permit<Read>, sources: &Sources, heading: &RunHeading) -
     Heading {
         name: html::escape(&format!("{id}{by_hand}{none}")),
         title: id,
+        icon: Some(CardIcon::CommandLine),
         state: None,
         line: Some(item_line(permit, sources, &heading.id)),
     }
@@ -1223,8 +1224,11 @@ fn transcript_page_at(
 /// Heading).
 fn item_line(permit: &Permit<Read>, sources: &Sources, id: &RunId) -> Html {
     let snapshot = actions::view_snapshot(permit, sources);
-    let names = Names::of(&sources.work_dir.repo, snapshot.as_deref());
-    ItemCell::of(&id.of, &names).html()
+    let naming = Naming::Titled {
+        repo: &sources.work_dir.repo,
+        snapshot: snapshot.as_deref(),
+    };
+    ItemCell::of(&id.of, &naming).html()
 }
 
 /// The transcript as its records hold it now, and while the run is in
@@ -1326,9 +1330,9 @@ pub(super) async fn transcript_page(
     }
 }
 
-/// The place of a run's screen, or of a transcript's: alone, in Runs.
+/// The place of a run's screen, or of a transcript's: alone.
 fn run_place(thing: Thing) -> shell::Place {
-    shell::Place::Alone(shell::Area::Runs, thing)
+    shell::Place::Alone(thing)
 }
 
 pub(super) async fn run_page(
@@ -1350,7 +1354,10 @@ pub(super) async fn run_page(
             return nothing_there(page, missing, frame, "transcript");
         }
         Some(found) => found,
-        None => Thing::Found(Heading::named(id)),
+        None => Thing::Found(Heading {
+            icon: Some(CardIcon::CommandLine),
+            ..Heading::named(id)
+        }),
     };
     let capture = Offer::of(&permit, &sources, &run).await.map(Offer::html);
     transcript_page(
