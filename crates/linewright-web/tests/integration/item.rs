@@ -685,18 +685,18 @@ fn fact_value<'a>(html: &'a Html, label: &str) -> ElementRef<'a> {
 }
 
 /// `docs/specs/board.md`, Item, Heading: the heading's `card-title`
-/// holds, after its icon, #N's title, then its number in `font-normal`, at
-/// the `card-title`'s own gap.
+/// holds, after its icon, #N's title, then a space, then its number in
+/// `font-normal`, the two as one text that wraps between words.
 #[test_log::test(tokio::test)]
-async fn the_item_pages_heading_holds_its_icon_title_and_number_in_its_card_title() {
+async fn the_item_pages_heading_holds_its_icon_then_its_title_and_number_as_one_text() {
     let pages = Pages::of(for_the_maintainer()).await;
 
     let html = pages.page("/items/1").await;
 
     let h1 = select(&html, "#heading h1.card-title")[0];
-    assert_eq!(parts(h1), ["icon issue-opened", "title", "number"]);
-    assert_eq!(classes_starting_with(h1, &["gap-"]), Vec::<&str>::new());
-    let number = select_in(h1, ":scope > a[href^='https://github.com/']")[0];
+    assert_eq!(parts(h1), ["icon issue-opened", "span."], "{}", h1.html());
+    assert_title_then_number_as_one_text(h1);
+    let number = select_in(h1, "a[href^='https://github.com/']")[0];
     assert!(
         has_classes(number, &["font-normal", "text-base-content/60"]),
         "{}",
@@ -822,23 +822,18 @@ async fn a_related_tracking_issue_has_the_rest_of_its_lane_head_after_its_number
 }
 
 /// `docs/specs/board.md`, Item, Items in Waiting for and in what keeps #N
-/// out: an item is its title, then its number, `gap-1` apart, and one
-/// that Linewright has not read is its number alone, in secondary text.
+/// out: an item is its title, then a space, then its number, wrapping
+/// between words with its sentence, and one that Linewright has not read
+/// is its number alone, in secondary text.
 #[test_log::test(tokio::test)]
-async fn an_item_waited_for_is_its_title_then_its_number_gap_1_apart() {
+async fn an_item_waited_for_is_its_title_then_its_number_as_one_text() {
     let pages = Pages::of(blocked(true)).await;
 
     let html = pages.page("/items/3").await;
 
     let waits = fact_value(&html, "Waiting for");
     let lines = select_in(waits, ":scope > div");
-    let titled = select_in(lines[0], ":scope > .inline-flex")[0];
-    assert!(
-        has_classes(titled, &["gap-1", "items-baseline"]),
-        "{}",
-        titled.html()
-    );
-    assert_eq!(parts(titled), ["title", "number"]);
+    let titled = assert_title_then_number_as_one_text(lines[0]);
     let unread = select_in(lines[1], ":scope > *")[0];
     assert_eq!(parts(lines[1])[0], "number", "{}", lines[1].html());
     for number in [select_in(titled, ":scope > a")[1], unread] {

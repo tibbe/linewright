@@ -21,10 +21,11 @@ use linewright_core::access::{Permit, Read};
 use linewright_core::actions;
 use linewright_core::actions::{Action, RunHeading};
 use linewright_core::api::{EventId, Sources};
+use linewright_core::automation::AutomationName;
 use linewright_core::domain::Timestamp;
 use linewright_core::logs::{KeptRuns, LogsError, RunRecords, Which};
 use linewright_core::phrase::Status;
-use linewright_core::runs::{self, Ran, RunId};
+use linewright_core::runs::{self, Ran, RunId, RunOf};
 use linewright_core::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
 use linewright_core::transcript::{
     self, After, Call, Change, Changed, CloneEnded, Course, End, EntryAt, Feed, INTERRUPTED,
@@ -38,8 +39,7 @@ use super::capture::{self, Offer};
 use super::components::{EntryStatus, StatusBadge};
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon, IconSize};
-use super::names::Naming;
-use super::runs_table::ItemCell;
+use super::names;
 use super::shell::{self, Frame, Heading, Missing, Navigation, Thing};
 use super::{
     ErrorPage, Page, Sent, nothing_there, render, run_path, samples, unanswered, with_query,
@@ -1218,16 +1218,29 @@ fn transcript_page_at(
     Page::new(place, events, navigation).buttons(buttons)
 }
 
-/// What `id` is of, as the Item column of a list of runs names it, its item
-/// as Linewright holds it now (`docs/specs/runs.md`, Run,
-/// Heading).
+/// What `id` is of, under its heading (`docs/specs/runs.md`, Run, The
+/// heading's item): its item as Linewright holds it now, its title and
+/// number as one text that wraps, or "automation" and the automation's
+/// name, linking to Automations.
 fn item_line(permit: &Permit<Read>, sources: &Sources, id: &RunId) -> Html {
-    let snapshot = actions::view_snapshot(permit, sources);
-    let naming = Naming::Titled {
-        repo: &sources.work_dir.repo,
-        snapshot: snapshot.as_deref(),
-    };
-    ItemCell::of(&id.of, &naming).html()
+    match &id.of {
+        RunOf::Work { item, .. } => {
+            let snapshot = actions::view_snapshot(permit, sources);
+            names::titled_item(&sources.work_dir.repo, snapshot.as_deref(), *item)
+        }
+        RunOf::Automation { automation } => html::rendered(&AutomationLink { name: automation }),
+    }
+}
+
+/// An automation, as a run's heading names it: "automation" and its name,
+/// a daisyUI `link`, `link-hover`, to Automations, wrapping with its line.
+#[derive(Template)]
+#[template(
+    source = r#"<a class="link link-hover" href="/automations">automation {{ name }}</a>"#,
+    ext = "html"
+)]
+struct AutomationLink<'a> {
+    name: &'a AutomationName,
 }
 
 /// The transcript as its records hold it now, and while the run is in

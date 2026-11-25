@@ -124,20 +124,6 @@ impl ItemCell {
             RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
         }
     }
-
-    /// The cell's content as markup.
-    pub(super) fn html(&self) -> Html {
-        html::rendered(&ItemCellHtml { item: self })
-    }
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"{%- import "macros.html" as ui -%}{% call ui::item_cell(item) %}{% endcall %}"#,
-    ext = "html"
-)]
-struct ItemCellHtml<'a> {
-    item: &'a ItemCell,
 }
 
 /// A list of runs as the region `runs` of its page.
