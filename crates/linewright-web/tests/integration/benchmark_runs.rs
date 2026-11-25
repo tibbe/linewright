@@ -240,7 +240,7 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_each_viewed_fr
     assert!(
         alignments
             .iter()
-            .all(|row| row == &["start", "start", "start", "start", "end", "end", "start"]),
+            .all(|row| row == &["start", "start", "end", "end", "end", "end", "start"]),
         "{alignments:?}"
     );
 }
@@ -837,10 +837,22 @@ async fn the_configurations_table_shows_each_configurations_figures() {
     );
     let alignments = alignments(&html, "#configurations");
     let expected = [
-        "none", "start", "start", "end", "end", "end", "end", "start", "start", "start",
+        "none", "start", "start", "end", "end", "end", "end", "end", "end", "start",
     ];
-    assert_eq!(alignments[0], expected);
-    assert_eq!(alignments[1], expected);
+    let head_and_rows: Vec<_> = alignments.iter().filter(|row| row.len() > 1).collect();
+    let rows = select(&html, "#configurations tbody tr:not([id$='_details'])");
+    assert_eq!(head_and_rows.len(), 1 + rows.len(), "{alignments:?}");
+    for row in [
+        "configuration-1",
+        "configuration-1_task-1",
+        "configuration-1_task-1_trial-1",
+    ] {
+        assert!(rows.iter().any(|it| it.attr("id") == Some(row)), "{row}");
+    }
+    assert!(
+        head_and_rows.iter().all(|row| *row == &expected),
+        "{alignments:?}"
+    );
     let chevron = select(&html, "#configuration-1 > td:first-child > button")[0];
     assert_eq!(
         chevron.attr("aria-controls"),

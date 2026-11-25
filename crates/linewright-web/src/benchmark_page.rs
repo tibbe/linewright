@@ -172,11 +172,12 @@ impl BenchmarkRunsColumn {
     /// How the column's head and cells align.
     fn align(self) -> Align {
         match self {
-            BenchmarkRunsColumn::Duration | BenchmarkRunsColumn::Cost => Align::End,
+            BenchmarkRunsColumn::Tasks
+            | BenchmarkRunsColumn::Configurations
+            | BenchmarkRunsColumn::Duration
+            | BenchmarkRunsColumn::Cost => Align::End,
             BenchmarkRunsColumn::Launched
             | BenchmarkRunsColumn::State
-            | BenchmarkRunsColumn::Tasks
-            | BenchmarkRunsColumn::Configurations
             | BenchmarkRunsColumn::View => Align::Start,
         }
     }
