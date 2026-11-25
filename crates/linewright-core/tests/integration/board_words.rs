@@ -2,8 +2,9 @@
 //! title, as `card_line` gives it.
 
 use linewright_core::board::{CardLine, Elapsed, Ended, Held, Running, Stop, card_line};
-use linewright_core::domain::{IssueCloseReason, Login, Number, Timestamp};
+use linewright_core::domain::{IssueCloseReason, ItemKind, Login, Number, Timestamp};
 use linewright_core::holds::Hold;
+use linewright_core::phrase::Segment;
 use linewright_core::reconcile::WorkKind;
 use linewright_core::repo_files::FileError;
 use linewright_core::testing::{at, card, logins};
@@ -168,4 +169,29 @@ fn a_line_ends_with_when_the_card_entered_its_column(
     #[case] expected: Option<&str>,
 ) {
     assert_eq!(words(line, entered).as_deref(), expected);
+}
+
+/// `docs/specs/board.md`, Cards, Its line: an item a line names is an issue
+/// or a pull request, which a pull request's icon before its number tells.
+#[rstest]
+#[case::blocked_by_an_issue(CardLine::BlockedBy(Number(12)), Number(12), ItemKind::Issue)]
+#[case::in_review_on_a_pull_request(review(None, None), Number(42), ItemKind::PullRequest)]
+#[case::closed_in_a_pull_request(
+    CardLine::Ended { ended: Ended::ClosedIn(Number(42)), at: at("2026-10-01T12:00:00Z") },
+    Number(42),
+    ItemKind::PullRequest
+)]
+#[test_log::test]
+fn a_line_names_an_item_as_an_issue_or_a_pull_request(
+    #[case] line: CardLine,
+    #[case] number: Number,
+    #[case] kind: ItemKind,
+) {
+    let phrase = card_line(&card(Some(line), None)).unwrap();
+    let items: Vec<&Segment> = phrase
+        .segments()
+        .iter()
+        .filter(|segment| matches!(segment, Segment::Item { .. }))
+        .collect();
+    assert_eq!(items, [&Segment::Item { number, kind }]);
 }

@@ -9,14 +9,12 @@ use serde::Deserialize;
 
 use linewright_core::actions::{self, BoardScreen, CardScreen, LaneScreen};
 use linewright_core::board::Column;
-use linewright_core::domain::Login;
+use linewright_core::domain::{ItemKind, Login};
 use linewright_core::phrase::Status;
 
 use super::caller::Reader;
 use super::cards::{self, lane_head, line_html};
 use super::html::{self, Html};
-use super::icons::ItemKind;
-use super::names::Names;
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, render, with_filters};
 
@@ -71,7 +69,6 @@ struct CardShown {
 
 impl BoardShown {
     fn of(board: &BoardScreen, repo: &str) -> BoardShown {
-        let names = Names::of(repo, None);
         let (finished, unfinished): (Vec<&LaneScreen>, Vec<&LaneScreen>) = board
             .lanes
             .iter()
@@ -79,7 +76,7 @@ impl BoardShown {
         let shown = |lanes: Vec<&LaneScreen>| {
             lanes
                 .into_iter()
-                .map(|lane| LaneShown::of(lane, &names))
+                .map(|lane| LaneShown::of(lane, repo))
                 .collect()
         };
         BoardShown {
@@ -96,10 +93,10 @@ impl BoardShown {
 }
 
 impl LaneShown {
-    fn of(lane: &LaneScreen, names: &Names) -> LaneShown {
+    fn of(lane: &LaneScreen, repo: &str) -> LaneShown {
         LaneShown {
             id: format!("lane-{}", lane.head.number.0),
-            head: lane_head(&lane.head, names.repo()),
+            head: lane_head(&lane.head, repo),
             cells: Column::ALL
                 .into_iter()
                 .map(|column| CellShown {
@@ -108,7 +105,7 @@ impl LaneShown {
                         .cards
                         .iter()
                         .filter(|card| card.column == column)
-                        .map(|card| CardShown::of(card, names))
+                        .map(|card| CardShown::of(card, repo))
                         .collect(),
                 })
                 .collect(),
@@ -125,12 +122,12 @@ fn counted(n: usize, thing: &str) -> String {
 }
 
 impl CardShown {
-    fn of(card: &CardScreen, names: &Names) -> CardShown {
+    fn of(card: &CardScreen, repo: &str) -> CardShown {
         CardShown {
-            heading: html::titled(card.number, &card.title, names.repo()),
+            heading: html::titled(card.number, &card.title, repo),
             kind: ItemKind::of(card.pull_request),
             status: card.status.map(cards::status),
-            line: card.line.as_ref().map(|line| line_html(line, names)),
+            line: card.line.as_ref().map(|line| line_html(line, repo)),
             quiet: card.column == Column::Done,
         }
     }

@@ -3,10 +3,10 @@
 //! vendored beside this file with their licences, and which icon each part
 //! has.
 
+use linewright_core::domain::ItemKind;
 use linewright_core::phrase::Status;
 
 use super::html::{self, Html};
-use super::shell::Area;
 
 /// The icons, each its variant, its name as Heroicons and Octicons name it,
 /// and its vendored SVG file.
@@ -247,8 +247,12 @@ pub(super) fn named_status_icon(status: &Status) -> Html {
 /// (`docs/specs/ui_patterns.md`, Cards and Icons).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CardIcon {
-    /// What an area holds, by its icon in the navigation.
-    Area(Area),
+    /// What the board holds: an item.
+    ViewColumns,
+    /// A run, or runs.
+    CommandLine,
+    /// A benchmark, or what it holds.
+    Beaker,
     /// A benchmark run's configurations.
     Configurations,
     /// A grid of passes, a task's under each configuration.
@@ -264,7 +268,9 @@ pub(super) enum CardIcon {
 impl CardIcon {
     pub(super) fn icon(self) -> Icon {
         match self {
-            CardIcon::Area(area) => area.icon(),
+            CardIcon::ViewColumns => Icon::ViewColumns,
+            CardIcon::CommandLine => Icon::CommandLine,
+            CardIcon::Beaker => Icon::Beaker,
             CardIcon::Configurations => Icon::AdjustmentsHorizontal,
             CardIcon::Grid => Icon::TableCells,
             CardIcon::Chart => Icon::ChartBar,
@@ -274,43 +280,32 @@ impl CardIcon {
     }
 }
 
-/// Whether an item is an issue or a pull request, which its card carries
-/// beside its number (`docs/specs/board.md`, Cards).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ItemKind {
-    Issue,
-    PullRequest,
+/// The icon of an item of `kind`, which its card carries beside its number
+/// (`docs/specs/board.md`, Cards).
+fn item_kind_icon(kind: ItemKind) -> Icon {
+    match kind {
+        ItemKind::Issue => Icon::IssueOpened,
+        ItemKind::PullRequest => Icon::GitPullRequest,
+    }
 }
 
-impl ItemKind {
-    /// A pull request where `pull_request`, and an issue otherwise.
-    pub(super) fn of(pull_request: bool) -> ItemKind {
-        if pull_request {
-            ItemKind::PullRequest
-        } else {
-            ItemKind::Issue
-        }
-    }
-
-    pub(super) fn icon(self) -> Icon {
-        match self {
-            ItemKind::Issue => Icon::IssueOpened,
-            ItemKind::PullRequest => Icon::GitPullRequest,
-        }
-    }
-
-    /// Its icon beside a number, which a screen reader reads before it.
-    pub(super) fn svg(self) -> Html {
-        let name = match self {
-            ItemKind::Issue => "issue",
-            ItemKind::PullRequest => "pull request",
-        };
-        self.icon().named(IconSize::Inline, name)
-    }
+/// The icon of an item of `kind` beside its number, which a screen reader
+/// reads before it.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "askama passes a template's values by reference, at any depth"
+)]
+pub(super) fn item_kind_svg(kind: &ItemKind) -> Html {
+    let name = match kind {
+        ItemKind::Issue => "issue",
+        ItemKind::PullRequest => "pull request",
+    };
+    item_kind_icon(*kind).named(IconSize::Inline, name)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::shell::Area;
     use super::*;
 
     /// `docs/specs/ui_patterns.md`, Icons, Which icon: each part has the icon
@@ -322,7 +317,7 @@ mod tests {
             (Area::Server, Icon::Server),
             (Area::People, Icon::Users),
         ] {
-            assert_eq!(CardIcon::Area(area).icon(), icon, "{area:?}");
+            assert_eq!(area.icon(), icon, "{area:?}");
         }
         for (status, icon) in [
             (Status::Done, Icon::CheckCircle),
@@ -364,7 +359,7 @@ mod tests {
     #[test_log::test]
     fn a_named_icon_is_an_image_a_screen_reader_reads() {
         assert_eq!(
-            ItemKind::Issue.svg().to_string(),
+            item_kind_svg(&ItemKind::Issue).to_string(),
             r#"<svg class="icon size-4 shrink-0" viewBox="0 0 16 16" fill="currentColor" role="img" aria-label="issue" data-icon="issue-opened"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg>"#,
         );
     }

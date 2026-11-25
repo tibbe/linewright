@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationName, LastScheduledRuns, Schedule, Trigger};
 use crate::domain::{
-    BranchIssue, ClosingPull, DesignedLabel, HandBackKind, Issue, Item, Linked, Login, Marking,
-    Merge, MergeMethod, MergedPull, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
-    SubIssue, TicketBranchName, Timestamp, Windows, label,
+    BranchIssue, ClosingPull, DesignedLabel, HandBackKind, Issue, Item, ItemKind, Linked, Login,
+    Marking, Merge, MergeMethod, MergedPull, Number, Pull, PullState, Requirement, Snapshot,
+    StatusLabel, SubIssue, TicketBranchName, Timestamp, Windows, label,
 };
 use crate::harness::UsageLimit;
 use crate::holds::{Hold, InForce};
@@ -197,6 +197,12 @@ impl WorkKind {
         WorkKind::FixCi,
         WorkKind::Update,
     ];
+
+    /// What its runs work on: the pull request for a stage on a pull
+    /// request, and the issue otherwise.
+    pub fn item_kind(self) -> ItemKind {
+        ItemKind::of(self.is_on_pull())
+    }
 
     pub fn is_on_pull(self) -> bool {
         match self {

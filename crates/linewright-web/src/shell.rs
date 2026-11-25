@@ -17,7 +17,7 @@ use linewright_core::access::{self, Permit};
 
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon};
-use super::names::Names;
+use super::names::Naming;
 use super::{Page, cookie_headers, cookie_values, render, run_path};
 pub(super) use linewright_core::actions::Missing;
 use linewright_core::actions::{self, Action, AutomationsScreen, LastRunScreen, Overview};
@@ -75,8 +75,7 @@ impl Area {
         }
     }
 
-    /// Its icon, in the navigation and before the title of a card of what
-    /// it holds (`docs/specs/shell.md`, Navigation).
+    /// Its icon in the navigation (`docs/specs/shell.md`, Navigation).
     pub(super) fn icon(self) -> Icon {
         match self {
             Area::Board => Icon::ViewColumns,
@@ -221,13 +220,13 @@ pub(super) enum Place {
         screen: &'static str,
         thing: Thing,
     },
-    /// A screen of one thing in `area` that belongs to no other, such as
+    /// A screen of one thing that belongs to no other, such as
     /// Run: it has no breadcrumbs, and its heading's name is its `h1`.
-    Alone(Area, Thing),
+    Alone(Thing),
     /// A screen of the account's menu, named `name`, such as
     /// Authorizations: it has no breadcrumbs and no heading card, and its
-    /// card's title, by `icon`, is its `h1`.
-    Account { name: &'static str, icon: CardIcon },
+    /// card's title is its `h1`.
+    Account { name: &'static str },
 }
 
 /// What a screen of one thing shows of it.
@@ -257,6 +256,8 @@ pub(super) struct Heading {
     /// under it, such as "Benchmark run 14".
     pub(super) title: String,
     pub(super) name: Html,
+    /// The icon before its name, if it has one.
+    pub(super) icon: Option<CardIcon>,
     /// The badge of the screen's state, where the screen gives it there.
     pub(super) state: Option<(Status, &'static str)>,
     /// The line under the name, such as the benchmark's stage.
@@ -264,12 +265,13 @@ pub(super) struct Heading {
 }
 
 impl Heading {
-    /// The heading named `title`, with no state and no line.
+    /// The heading named `title`, with no icon, no state and no line.
     pub(super) fn named(title: impl Into<String>) -> Heading {
         let title = title.into();
         Heading {
             name: html::escape(&title),
             title,
+            icon: None,
             state: None,
             line: None,
         }
@@ -361,18 +363,7 @@ impl Place {
     fn thing(&self) -> Option<&Thing> {
         match self {
             Place::Navigation(_) | Place::Account { .. } => None,
-            Place::Within { thing, .. } | Place::Alone(_, thing) => Some(thing),
-        }
-    }
-
-    /// The icon of its heading card's title: its area's, or a screen of
-    /// the account's menu's own.
-    pub(super) fn icon(&self) -> CardIcon {
-        match self {
-            Place::Navigation(area) | Place::Within { area, .. } | Place::Alone(area, _) => {
-                CardIcon::Area(*area)
-            }
-            Place::Account { icon, .. } => *icon,
+            Place::Within { thing, .. } | Place::Alone(thing) => Some(thing),
         }
     }
 
@@ -390,7 +381,7 @@ impl Place {
         let name = match self {
             Place::Navigation(area) => area.name().to_string(),
             Place::Account { name, .. } => (*name).to_string(),
-            Place::Within { thing, .. } | Place::Alone(_, thing) => thing.name(),
+            Place::Within { thing, .. } | Place::Alone(thing) => thing.name(),
         };
         format!("{name} · Linewright")
     }
@@ -587,8 +578,11 @@ pub(super) struct HoldShown {
 }
 
 /// How a page names items: with the titles of the view `overview` read.
-pub(super) fn names<'a>(overview: &'a Overview, repo: &'a str) -> Names<'a> {
-    Names::of(repo, overview.snapshot.as_deref())
+pub(super) fn naming<'a>(overview: &'a Overview, repo: &'a str) -> Naming<'a> {
+    Naming::Titled {
+        repo,
+        snapshot: overview.snapshot.as_deref(),
+    }
 }
 
 impl Frame {
@@ -603,12 +597,12 @@ impl Frame {
     ) -> Frame {
         let linewright = &read.server.linewright;
         let repo = sources.work_dir.repo.clone();
-        let names = names(read, &repo);
+        let naming = naming(read, &repo);
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
                 status: hold.status(),
-                phrase: html::phrase(&hold.phrase(), &names),
+                phrase: html::phrase(&hold.phrase(), &naming),
                 href: hold.href(),
             })
             .collect();
@@ -762,7 +756,7 @@ mod tests {
             "Benchmark run",
             Thing::Missing(Missing::BenchmarkRun("9".into())),
         );
-        let alone = Place::Alone(Area::Board, Thing::Missing(Missing::Item(Number(812))));
+        let alone = Place::Alone(Thing::Missing(Missing::Item(Number(812))));
 
         assert_eq!(
             within.crumbs(),

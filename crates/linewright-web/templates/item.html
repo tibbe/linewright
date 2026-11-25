@@ -6,7 +6,7 @@
 {% call ui::facts(item.facts) %}{% endcall %}
 </section>
 {%- endblock %}
-{%- call(part) ui::table_card("Runs", crate::icons::CardIcon::Area(crate::shell::Area::Runs), shows_name = true) %}
+{%- call(part) ui::table_card("Runs", Some(crate::icons::CardIcon::CommandLine), shows_name = true) %}
 {%- if part == crate::table::Part::Table %}
 {%- call ui::runs(runs) %}{% endcall %}
 {%- endif %}

@@ -20,6 +20,7 @@ use super::caller::Reader;
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
+use super::icons::CardIcon;
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::stats::{Stat, absent};
 use super::{ErrorPage, Page, benchmark_path, events, nothing_there, render, run_path};
@@ -166,6 +167,7 @@ struct QuestionRegion<'a> {
 /// (`docs/specs/benchmarks.md`, Task, Heading).
 fn page(task: &TaskScreen, navigation: Navigation) -> Page {
     let heading = Heading {
+        icon: Some(CardIcon::Beaker),
         line: Some(html::escape(&task.benchmark.stage.to_string())),
         ..Heading::named(task.task.name.as_str())
     };
@@ -239,7 +241,10 @@ pub(super) async fn task_page(
                     let error = format!("{e:#}");
                     warn!(task = id, error, "reading a task failed");
                     let page = ErrorPage {
-                        page: page(Thing::Found(Heading::named(id))),
+                        page: page(Thing::Found(Heading {
+                            icon: Some(CardIcon::Beaker),
+                            ..Heading::named(id)
+                        })),
                         frame,
                         region: "task",
                         error,

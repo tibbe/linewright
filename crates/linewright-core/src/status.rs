@@ -775,13 +775,19 @@ pub fn describe_next_run(trigger: Trigger) -> Option<Phrase> {
 /// pull request that was merged or closed unmerged.
 pub(crate) fn describe(state: State, detail: Option<&Detail>, tickets: Option<&Tickets>) -> Phrase {
     let beyond = match detail {
-        Some(Detail::InReview(review)) => {
-            Some(Phrase::from(review.pull_request).text(format!(" ({})", review.describe())))
-        }
+        Some(Detail::InReview(review)) => Some(
+            Phrase::default()
+                .pull_request(review.pull_request)
+                .text(format!(" ({})", review.describe())),
+        ),
         Some(Detail::InReviewElsewhere {
             pull_request,
             author,
-        }) => Some(Phrase::from(*pull_request).text(format!(", opened by {author}"))),
+        }) => Some(
+            Phrase::default()
+                .pull_request(*pull_request)
+                .text(format!(", opened by {author}")),
+        ),
         Some(Detail::PullRequest { review, .. }) => Some(review.describe().into()),
         Some(Detail::Ended {
             ended: Ended::Merged | Ended::ClosedUnmerged,
@@ -817,20 +823,23 @@ pub fn describe_wait(wait: &Wait) -> Phrase {
             .code("serve")
             .text(" restarts"),
         Wait::Environment => "the environment, until it is built".into(),
-        Wait::Blocker { issue } => Phrase::from(*issue).text(", which blocks it"),
+        Wait::Blocker { issue } => Phrase::default().issue(*issue).text(", which blocks it"),
         Wait::Assignee { assignee } => format!("{assignee}, who is assigned to it").into(),
-        Wait::ClosingPullRequest { pull_request } => {
-            Phrase::from(*pull_request).text(", which closes it")
-        }
-        Wait::PullRequest { pull_request } => {
-            Phrase::from(*pull_request).text(", its pull request, until it is merged or closed")
-        }
-        Wait::Ci { pull_request } => Phrase::from("CI on ").item(*pull_request),
+        Wait::ClosingPullRequest { pull_request } => Phrase::default()
+            .pull_request(*pull_request)
+            .text(", which closes it"),
+        Wait::PullRequest { pull_request } => Phrase::default()
+            .pull_request(*pull_request)
+            .text(", its pull request, until it is merged or closed"),
+        Wait::Ci { pull_request } => Phrase::from("CI on ").pull_request(*pull_request),
         Wait::MergeState { pull_request } => Phrase::from("GitHub to work out whether ")
-            .item(*pull_request)
+            .pull_request(*pull_request)
             .text(" can merge"),
         Wait::Tickets { open } => Phrase::from("its tickets: ")
-            .then(Phrase::join(open.iter().copied().map(Phrase::from), ", "))
+            .then(Phrase::join(
+                open.iter().map(|&ticket| Phrase::default().issue(ticket)),
+                ", ",
+            ))
             .text(" open"),
         Wait::PeopleAsked => Phrase::from("the people asked: labeled ").code(label::NEEDS_INFO),
         Wait::Maintainer => Phrase::from("the maintainer: to label it ").then(Phrase::join(
@@ -866,11 +875,13 @@ pub fn describe_wait(wait: &Wait) -> Phrase {
             let phrase = phrase.text(" again, since ");
             match since {
                 Relabel::Unassigned { .. } => phrase.text("Linewright was unassigned"),
-                Relabel::Merged { pull_request } => phrase.item(*pull_request).text(" merged"),
+                Relabel::Merged { pull_request } => {
+                    phrase.pull_request(*pull_request).text(" merged")
+                }
             }
         }
         Wait::Review { pull_request } => {
-            Phrase::from("the maintainer: to review ").item(*pull_request)
+            Phrase::from("the maintainer: to review ").pull_request(*pull_request)
         }
         Wait::Requirements {
             pull_request,
@@ -883,7 +894,7 @@ pub fn describe_wait(wait: &Wait) -> Phrase {
             };
             required
                 .text(", before ")
-                .item(*pull_request)
+                .pull_request(*pull_request)
                 .text(" merges")
         }
         Wait::RepositoryFile(FileError { path, error }) => {

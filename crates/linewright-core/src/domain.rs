@@ -21,6 +21,24 @@ impl fmt::Display for Number {
     }
 }
 
+/// Whether an item is an issue or a pull request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemKind {
+    Issue,
+    PullRequest,
+}
+
+impl ItemKind {
+    /// A pull request where `pull_request`, and an issue otherwise.
+    pub fn of(pull_request: bool) -> ItemKind {
+        if pull_request {
+            ItemKind::PullRequest
+        } else {
+            ItemKind::Issue
+        }
+    }
+}
+
 /// A GitHub repository, as `owner/name`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repo {

@@ -2,7 +2,7 @@ use std::fmt;
 
 use chrono::TimeDelta;
 
-use crate::domain::{Number, Timestamp};
+use crate::domain::{ItemKind, Number, Timestamp};
 
 /// Wording the monitoring commands show, with the items, times, durations
 /// and labels it names kept apart from its text, so that each can be shown as
@@ -92,7 +92,10 @@ impl Status {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Segment {
     Text(String),
-    Item(Number),
+    Item {
+        number: Number,
+        kind: ItemKind,
+    },
     Time(Timestamp),
     /// `since` is when it started, if it is still running.
     Duration {
@@ -119,8 +122,19 @@ impl Phrase {
     }
 
     #[must_use]
-    pub fn item(self, number: Number) -> Phrase {
-        self.push(Segment::Item(number))
+    pub fn issue(self, number: Number) -> Phrase {
+        self.push(Segment::Item {
+            number,
+            kind: ItemKind::Issue,
+        })
+    }
+
+    #[must_use]
+    pub fn pull_request(self, number: Number) -> Phrase {
+        self.push(Segment::Item {
+            number,
+            kind: ItemKind::PullRequest,
+        })
     }
 
     #[must_use]
@@ -193,12 +207,6 @@ impl From<String> for Phrase {
     }
 }
 
-impl From<Number> for Phrase {
-    fn from(number: Number) -> Phrase {
-        Phrase::default().item(number)
-    }
-}
-
 /// As the commands print it, so that what a tool returns reads as they do.
 impl serde::Serialize for Phrase {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -211,7 +219,7 @@ impl fmt::Display for Phrase {
         for segment in &self.0 {
             match segment {
                 Segment::Text(text) => f.write_str(text)?,
-                Segment::Item(number) => write!(f, "{number}")?,
+                Segment::Item { number, .. } => write!(f, "{number}")?,
                 Segment::Time(at) => write!(f, "{}", at.format("%Y-%m-%d %H:%M:%S UTC"))?,
                 Segment::Duration { seconds, .. } => write_duration(f, *seconds)?,
                 Segment::Code(code) => write!(f, "`{code}`")?,

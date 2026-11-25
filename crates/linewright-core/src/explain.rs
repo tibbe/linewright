@@ -281,7 +281,9 @@ impl Family {
         let parents = self.parents.iter().map(|parent| {
             ItemLine::fact(
                 "parent",
-                Phrase::from(parent.number)
+                parent
+                    .role
+                    .named(parent.number)
                     .text(", ")
                     .text(parent.role.describe()),
             )
@@ -289,7 +291,9 @@ impl Family {
         let children = self.children.iter().map(|child| {
             ItemLine::fact(
                 "child",
-                Phrase::from(child.number)
+                child
+                    .role
+                    .named(child.number)
                     .text(", ")
                     .text(child.role.describe()),
             )
@@ -320,6 +324,16 @@ impl ParentRole {
             ParentRole::SpecChange => "the spec change it was opened for",
         }
     }
+
+    /// `number`, an item in this role.
+    fn named(self, number: Number) -> Phrase {
+        match self {
+            ParentRole::IssueItCloses | ParentRole::TrackingIssue => {
+                Phrase::default().issue(number)
+            }
+            ParentRole::SpecChange => Phrase::default().pull_request(number),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,6 +357,14 @@ impl ChildRole {
             ChildRole::PullRequestClosingIt => "a pull request that closes it",
             ChildRole::Ticket => "one of its tickets",
             ChildRole::SpecChangeIssue => "its issue",
+        }
+    }
+
+    /// `number`, an item in this role.
+    fn named(self, number: Number) -> Phrase {
+        match self {
+            ChildRole::PullRequestClosingIt => Phrase::default().pull_request(number),
+            ChildRole::Ticket | ChildRole::SpecChangeIssue => Phrase::default().issue(number),
         }
     }
 }
@@ -795,7 +817,7 @@ fn describe_not_spec_change(because: &NotSpecChange) -> Phrase {
             .code(spec_glob.clone())
             .text(", the spec-glob"),
         NotSpecChange::TakenUp { issue } => {
-            spec_change.text("worked through its issue, ").item(*issue)
+            spec_change.text("worked through its issue, ").issue(*issue)
         }
         NotSpecChange::Designed { label } => spec_change
             .text("labeled ")

@@ -31,7 +31,7 @@
 {%- when crate::facts::Piece::Status { status, words } -%}
 {% call status_text(status, words) %}{% endcall %}
 {%- when crate::facts::Piece::Item { status, kind, heading } -%}
-<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ kind.svg() }}{{ heading|safe }}</span>
+<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ crate::icons::item_kind_svg(kind) }}{{ heading|safe }}</span>
 {%- when crate::facts::Piece::LaneHead(heading) -%}
 <span class="related-item">{{ heading|safe }}</span>
 {%- when crate::facts::Piece::Markup(markup) -%}
@@ -57,7 +57,7 @@
 {%- endmacro -%}
 
 {#- A table in its card (`docs/specs/ui_patterns.md`, Tables), named `name`.
-    The card's top holds `name` after `icon` as its title at its left, if `shows_name`, and
+    The card's top holds `name`, after `icon` if it has one, as its title at its left, if `shows_name`, and
     the buttons at its right, if `buttons`. A card that shows no name is named
     `name` for screen readers alone. The filters are in a row of their own
     under the top, unless `filters_stream` is empty, applied as the page's
@@ -70,7 +70,7 @@
 {%- if shows_name || buttons %}
 <div class="table-top flex shrink-0 flex-wrap items-center gap-2 px-4">
 {%- if shows_name %}
-<{{ heading }} class="card-title">{% call icon(icon.icon(), crate::icons::IconSize::CardTitle) %}{% endcall %}{{ name }}</{{ heading }}>
+<{{ heading }} class="card-title">{% if let Some(card_icon) = icon %}{% call icon(card_icon.icon(), crate::icons::IconSize::CardTitle) %}{% endcall %}{% endif %}{{ name }}</{{ heading }}>
 {%- endif %}
 {%- if buttons %}
 <div class="ml-auto flex flex-wrap items-center gap-2">

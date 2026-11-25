@@ -11,7 +11,7 @@
 {%- for card in cell.cards %}
 <li class="{% call ui::card_look("bg-base-100") %}{% endcall %} card-sm{% call toned(card.status) %}{% endcall %}{% if card.quiet %} opacity-60{% endif %}">
 <div class="card-body gap-1">
-<h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{{ card.kind.svg() }}{{ card.heading|safe }}</h3>
+<h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{{ crate::icons::item_kind_svg(card.kind) }}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
 <p class="line text-base-content/60">{% if let Some(status) = card.status %}{% call ui::icon(crate::icons::status_icon(status), crate::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ line|safe }}</p>
 {%- endif %}

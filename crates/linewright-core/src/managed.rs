@@ -188,7 +188,7 @@ impl Ended {
     /// How it ended, as a card in Done says (`docs/specs/board.md`, Cards).
     pub(crate) fn worded(self) -> Phrase {
         match self {
-            Ended::ClosedIn(pull) => Phrase::from("closed in ").item(pull),
+            Ended::ClosedIn(pull) => Phrase::from("closed in ").pull_request(pull),
             Ended::Closed(None) => "closed".into(),
             Ended::Closed(Some(IssueCloseReason::Completed)) => "closed as completed".into(),
             Ended::Closed(Some(IssueCloseReason::NotPlanned)) => "closed as not planned".into(),

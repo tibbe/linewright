@@ -1,12 +1,12 @@
 use chrono::{TimeZone, Utc};
-use linewright_core::domain::Number;
-use linewright_core::phrase::Phrase;
+use linewright_core::domain::{ItemKind, Number};
+use linewright_core::phrase::{Phrase, Segment};
 
 #[test_log::test]
 fn a_phrase_reads_as_the_commands_word_items_times_durations_and_labels() {
     let at = Utc.with_ymd_and_hms(2026, 3, 4, 5, 6, 7).unwrap();
     let phrase = Phrase::from("waiting for ")
-        .item(Number(42))
+        .issue(Number(42))
         .text(", labeled ")
         .code("needs-info")
         .text(" since ")
@@ -21,6 +21,29 @@ fn a_phrase_reads_as_the_commands_word_items_times_durations_and_labels() {
     );
 }
 
+#[test_log::test]
+fn an_item_is_an_issue_or_a_pull_request_and_reads_as_its_number_alike() {
+    let phrase = Phrase::default()
+        .issue(Number(7))
+        .text(" closed in ")
+        .pull_request(Number(8));
+    assert_eq!(
+        phrase.segments(),
+        [
+            Segment::Item {
+                number: Number(7),
+                kind: ItemKind::Issue
+            },
+            Segment::Text(" closed in ".to_string()),
+            Segment::Item {
+                number: Number(8),
+                kind: ItemKind::PullRequest
+            },
+        ]
+    );
+    assert_eq!(phrase.to_string(), "#7 closed in #8");
+}
+
 /// `docs/specs/ui_patterns.md`, Time, Durations.
 #[test_log::test]
 fn a_duration_reads_as_its_two_largest_units_that_are_not_zero() {
@@ -31,7 +54,7 @@ fn a_duration_reads_as_its_two_largest_units_that_are_not_zero() {
 
 #[test_log::test]
 fn phrases_join_with_a_separator() {
-    let joined = Phrase::join([Number(1), Number(2), Number(3)].map(Phrase::from), ", ");
+    let joined = Phrase::join([1, 2, 3].map(|n| Phrase::default().issue(Number(n))), ", ");
     assert_eq!(joined.to_string(), "#1, #2, #3");
     assert_eq!(Phrase::join([], "; ").to_string(), "");
 }
@@ -40,7 +63,7 @@ fn phrases_join_with_a_separator() {
 fn a_list_puts_its_conjunction_before_its_last_phrase() {
     let list = |numbers: &[u64], conjunction| {
         Phrase::list(
-            numbers.iter().map(|&n| Phrase::from(Number(n))),
+            numbers.iter().map(|&n| Phrase::default().issue(Number(n))),
             conjunction,
         )
         .to_string()

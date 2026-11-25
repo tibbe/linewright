@@ -33,6 +33,7 @@ use super::caller::{Asking, Reader};
 use super::capture::{CapturingField, Task, TaskField, TaskFields, capture_run};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
+use super::icons::CardIcon;
 use super::launch::{
     BriefTexts, NEW_BENCHMARK_RUN, NEW_BENCHMARK_RUN_TITLE, NewBenchmarkRunForm, StageSettings,
     launch_title,
@@ -42,7 +43,7 @@ use super::making::{
     REQUIRED, both,
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
+use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::table::{Align, Column, View};
 use super::write::{Refused, Write};
 use super::{
@@ -651,11 +652,12 @@ async fn shown(
 /// stream's on the pages `paging` asks for.
 fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     let heading = Heading {
+        icon: Some(CardIcon::Beaker),
         line: Some(html::escape(&benchmark.stage.to_string())),
         ..Heading::named(benchmark.name.as_str())
     };
     Page::new(
-        Place::Alone(Area::Benchmarks, Thing::Found(heading)),
+        Place::Alone(Thing::Found(heading)),
         paging.stream(benchmark.id),
         navigation,
     )
@@ -823,7 +825,7 @@ async fn benchmark_page_on(
             let events = paging.path(&format!("/events/benchmarks/{id}"));
             match unshown {
                 Unshown::NoSuch => nothing_there(
-                    |thing| Page::new(Place::Alone(Area::Benchmarks, thing), events, navigation),
+                    |thing| Page::new(Place::Alone(thing), events, navigation),
                     Missing::Benchmark(id),
                     frame,
                     "tasks",
@@ -833,7 +835,10 @@ async fn benchmark_page_on(
                     warn!(benchmark = id, error, "reading a benchmark failed");
                     let page = ErrorPage {
                         page: Page::new(
-                            Place::Alone(Area::Benchmarks, Thing::Found(Heading::named(id))),
+                            Place::Alone(Thing::Found(Heading {
+                                icon: Some(CardIcon::Beaker),
+                                ..Heading::named(id)
+                            })),
                             events,
                             navigation,
                         ),

@@ -1,7 +1,7 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-{%- call(part) ui::table_card("Runs", crate::icons::CardIcon::Area(crate::shell::Area::Runs), shows_name = false, filters_stream = "/events/runs") %}
+{%- call(part) ui::table_card("Runs", None::<crate::icons::CardIcon>, shows_name = false, filters_stream = "/events/runs") %}
 {%- match part %}
 {%- when crate::table::Part::Filters %}
 {%- call ui::filter_input("Item", "item", filters.item, width = "w-16", inputmode = "numeric") %}{% endcall %}

@@ -8,7 +8,7 @@ use linewright_core::phrase::Status;
 use linewright_core::runs::{self, Listing, Run, RunOf};
 
 use super::html::{self, Html};
-use super::names::Names;
+use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_path;
 use super::table::{Align, Column, View};
@@ -97,10 +97,10 @@ pub(super) enum ItemCell {
 }
 
 impl ItemCell {
-    /// What the run of `of` is of, its item as `names` names it.
-    pub(super) fn of(of: &RunOf, names: &Names) -> ItemCell {
+    /// What the run of `of` is of, its item as `naming` names it.
+    pub(super) fn of(of: &RunOf, naming: &Naming) -> ItemCell {
         match of {
-            RunOf::Work { item, .. } => ItemCell::Item(names.item(*item)),
+            RunOf::Work { item, stage } => ItemCell::Item(naming.item(*item, stage.item_kind())),
             RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
         }
     }
@@ -138,11 +138,11 @@ pub(super) struct LeftOut {
 
 impl RunsShown {
     /// The `requested` page of the runs of `listing`, each with its item
-    /// as `names` names it, its links to other pages leading where `href`
+    /// as `naming` names it, its links to other pages leading where `href`
     /// says.
     pub(super) fn all(
         listing: &Listing,
-        names: &Names,
+        naming: &Naming,
         requested: Requested,
         href: impl Fn(Requested) -> PageHref,
     ) -> RunsShown {
@@ -150,7 +150,7 @@ impl RunsShown {
         let rows = Rows::WithItems(
             listing.runs[pages.range()]
                 .iter()
-                .map(|run| (ItemCell::of(&run.id.of, names), RunRow::of(run, names)))
+                .map(|run| (ItemCell::of(&run.id.of, naming), RunRow::of(run, naming)))
                 .collect(),
         );
         RunsShown::of(&listing.runs, rows, None, pages.shown("runs", href))
@@ -158,12 +158,12 @@ impl RunsShown {
 
     /// #`item`'s runs, as `runs` listed them narrowed to it, without the
     /// Item column; the earlier runs it left out listed on the runs page.
-    pub(super) fn of_item(listed: &ItemRuns, item: Number, names: &Names) -> RunsShown {
+    pub(super) fn of_item(listed: &ItemRuns, item: Number, naming: &Naming) -> RunsShown {
         let rows = Rows::WithoutItems(
             listed
                 .runs
                 .iter()
-                .map(|run| RunRow::of(run, names))
+                .map(|run| RunRow::of(run, naming))
                 .collect(),
         );
         let left_out = (listed.left_out > 0).then(|| LeftOut {
@@ -191,7 +191,7 @@ impl RunsShown {
 }
 
 impl RunRow {
-    fn of(run: &Run, names: &Names) -> RunRow {
+    fn of(run: &Run, naming: &Naming) -> RunRow {
         RunRow {
             status: run.outcome.status(),
             word: run.outcome.word(),
@@ -206,7 +206,7 @@ impl RunRow {
             },
             started: html::time(run.started_at),
             by_hand: run.started().by_hand(),
-            duration: runs::duration(run).map(|duration| html::phrase(&duration, names)),
+            duration: runs::duration(run).map(|duration| html::phrase(&duration, naming)),
         }
     }
 }
