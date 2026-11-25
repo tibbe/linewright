@@ -465,13 +465,14 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
   `command-line`. It holds the run ID, then ", by hand" for an automation's run
   by hand, and "(it started no session)" for a run that ended without a session.
   Under them is the run's item.
-- **The heading's item** is the item's title, then its number, `gap-1` apart.
-  The title is a daisyUI `link`, `link-hover`, to the item's
-  [Item](board.md#item). The number is in secondary text
-  ([Type](ui_patterns.md#type)), and is a daisyUI `link`, `link-hover`, to the
-  item on GitHub. An item that Linewright has not read is its number alone, in
-  secondary text, a daisyUI `link`, `link-hover`, to the item on GitHub. For an
-  automation's run, it is "automation" and its name, linking to Automations.
+- **The heading's item** is the item's title, then a space, then its number. The
+  title and the number wrap between words, as one text. The title is a
+  daisyUI `link`, `link-hover`, to the item's [Item](board.md#item). The number
+  is in secondary text ([Type](ui_patterns.md#type)), and is a daisyUI `link`,
+  `link-hover`, to the item on GitHub. An item that Linewright has not read is
+  its number alone, in secondary text, a daisyUI `link`, `link-hover`, to the
+  item on GitHub. For an automation's run, it is "automation" and its name,
+  linking to Automations.
 - **A session's heading.** The session's number and when it started, such as
   "session 1: started 5 minutes ago", then how long it has run. This time does
   not include a wait for the usage limit to reset. Where Linewright does not
