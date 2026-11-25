@@ -8,15 +8,15 @@
 {%- if part == crate::table::Part::Table %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
-<thead><tr>{% for head in HEADS %}<th class="text-left">{{ head }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in AuthorizationsColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in authorizations.rows %}
 <tr>
-<th class="text-left whitespace-nowrap">{{ row.client }}</th>
-<td class="text-left">{{ row.sends_back_to }}</td>
-<td class="text-left whitespace-nowrap">{{ row.allowed|safe }}</td>
-<td class="text-left whitespace-nowrap">{{ row.ends|safe }}</td>
-<td class="text-left"><div class="flex items-center justify-end gap-1">{%- call ui::row_button(crate::buttons::Verb::End, row.end, row.client) %}{% endcall %}</div></td>
+<th class="{{ AuthorizationsColumn::Client.align().class() }} whitespace-nowrap">{{ row.client }}</th>
+<td class="{{ AuthorizationsColumn::SendsBackTo.align().class() }}">{{ row.sends_back_to }}</td>
+<td class="{{ AuthorizationsColumn::Allowed.align().class() }} whitespace-nowrap">{{ row.allowed|safe }}</td>
+<td class="{{ AuthorizationsColumn::Ends.align().class() }} whitespace-nowrap">{{ row.ends|safe }}</td>
+<td class="{{ AuthorizationsColumn::Buttons.align().class() }}"><div class="flex items-center justify-end gap-1">{%- call ui::row_button(crate::buttons::Verb::End, row.end, row.client) %}{% endcall %}</div></td>
 </tr>
 {%- endfor %}
 </tbody>

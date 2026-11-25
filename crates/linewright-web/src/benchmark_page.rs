@@ -44,7 +44,7 @@ use super::making::{
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
-use super::table::{Align, Column, View};
+use super::table::{Align, View};
 use super::write::{Refused, Write};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, cookie_headers,
@@ -169,18 +169,16 @@ impl BenchmarkRunsColumn {
         }
     }
 
-    /// The class that aligns the column's head and cells as its kind does.
-    fn align(self) -> &'static str {
-        let column = match self {
-            BenchmarkRunsColumn::Duration => Column::Duration,
-            BenchmarkRunsColumn::Cost => Column::Money,
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
+            BenchmarkRunsColumn::Duration | BenchmarkRunsColumn::Cost => Align::End,
             BenchmarkRunsColumn::Launched
             | BenchmarkRunsColumn::State
             | BenchmarkRunsColumn::Tasks
             | BenchmarkRunsColumn::Configurations
-            | BenchmarkRunsColumn::View => Column::Other,
-        };
-        Align::of(column).class()
+            | BenchmarkRunsColumn::View => Align::Start,
+        }
     }
 }
 
@@ -209,12 +207,11 @@ impl TasksColumn {
         }
     }
 
-    /// The class that aligns the column's head and cells as its kind does.
-    fn align(self) -> &'static str {
-        let column = match self {
-            TasksColumn::Name | TasksColumn::CapturedFrom | TasksColumn::View => Column::Other,
-        };
-        Align::of(column).class()
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
+            TasksColumn::Name | TasksColumn::CapturedFrom | TasksColumn::View => Align::Start,
+        }
     }
 }
 

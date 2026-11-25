@@ -5,14 +5,14 @@
 {%- else %}
 <div class="overflow-x-auto">
 <table class="table">
-<thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for task in tasks %}
 <tr>
 {%- for column in TasksColumn::ALL %}
 {%- match column %}
 {%- when TasksColumn::Name %}
-<th class="{{ column.align() }}">
+<th class="{{ column.align().class() }}">
 <span>{{ task.name }}</span>
 {%- match task.criteria %}
 {%- when CriteriaShown::Read(first_line) %}
@@ -22,9 +22,9 @@
 {%- endmatch -%}
 </th>
 {%- when TasksColumn::CapturedFrom %}
-<td class="{{ column.align() }}"><a class="link link-hover" href="{{ task.run_href }}">{{ task.run }}</a></td>
+<td class="{{ column.align().class() }}"><a class="link link-hover" href="{{ task.run_href }}">{{ task.run }}</a></td>
 {%- when TasksColumn::View %}
-<td class="{{ column.align() }}">{% call ui::row_view(task.view) %}{% endcall %}</td>
+<td class="{{ column.align().class() }}">{% call ui::row_view(task.view) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>

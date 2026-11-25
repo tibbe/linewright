@@ -2,24 +2,24 @@
 <div id="configurations">
 <div class="overflow-x-auto">
 <table class="table">
-<thead><tr><th class="w-0"></th>{% for column in ConfigurationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr><th class="w-0"></th>{% for column in ConfigurationsColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in benchmark_run.rows %}
 {%- match row %}
 {%- when Row::Figures(row) %}
 {%- call ui::fold_row(row.id, of = row.level.of()) %}
 {%- call ui::fold_cell(row.fold) %}{% endcall %}
-<th class="{{ ConfigurationsColumn::Name.align() }} {{ row.level.name_class() }} whitespace-nowrap">{{ row.name }}</th>
-<td class="{{ ConfigurationsColumn::PassRate.align() }}">
+<th class="{{ ConfigurationsColumn::Name.align().class() }} {{ row.level.name_class() }} whitespace-nowrap">{{ row.name }}</th>
+<td class="{{ ConfigurationsColumn::PassRate.align().class() }}">
 {%- match row.pass_rate %}
 {%- when PassRate::Text(text) %}{{ text }}
 {%- when PassRate::Status { status, words } %}{{ crate::components::StatusBadge::of(status, words) }}
 {%- endmatch -%}
 </td>
 {%- for figure in row.figures %}
-<td class="{{ ConfigurationsColumn::FIGURES[loop.index0].align() }} whitespace-nowrap">{{ figure }}</td>
+<td class="{{ ConfigurationsColumn::FIGURES[loop.index0].align().class() }} whitespace-nowrap">{{ figure }}</td>
 {%- endfor %}
-<td class="{{ ConfigurationsColumn::Edit.align() }}">
+<td class="{{ ConfigurationsColumn::Edit.align().class() }}">
 {%- if let Some(edit) = row.edit %}{% call ui::row_button(crate::buttons::Verb::Edit, edit, row.name) %}{% endcall %}{% endif -%}
 </td>
 {%- endcall %}

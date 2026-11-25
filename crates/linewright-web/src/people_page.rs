@@ -28,6 +28,7 @@ use super::logos::identity_logo;
 use super::making::{Answer, Field, FieldRefusals, Form, Making, REQUIRED, Refusal};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Missing, Navigation, Place};
+use super::table::Align;
 use super::write::{Refused, Write};
 use super::{ErrorPage, Page, events, render, with_filters};
 
@@ -66,6 +67,17 @@ impl PeopleColumn {
             PeopleColumn::State => "State",
             PeopleColumn::SignedIn => "Signed in",
             PeopleColumn::Buttons => "",
+        }
+    }
+
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
+            PeopleColumn::Person
+            | PeopleColumn::Role
+            | PeopleColumn::State
+            | PeopleColumn::SignedIn
+            | PeopleColumn::Buttons => Align::Start,
         }
     }
 }

@@ -13,22 +13,22 @@
 {%- if part == crate::table::Part::Table %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
-<thead><tr>{% for column in people.columns %}<th class="text-left">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in people.columns %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in people.rows %}
 <tr>
 {%- for column in people.columns %}
 {%- match column %}
 {%- when PeopleColumn::Person %}
-<th class="text-left"><div class="flex items-center gap-3">{% call ui::avatar(row.avatar, row.letter) %}{% endcall %}<div class="flex min-w-0 flex-col"><span class="whitespace-nowrap">{{ row.name }}</span><span class="flex items-center gap-1 text-sm font-normal text-base-content/60">{{ row.logo }}<span>{{ row.identity }}</span></span></div></div></th>
+<th class="{{ column.align().class() }}"><div class="flex items-center gap-3">{% call ui::avatar(row.avatar, row.letter) %}{% endcall %}<div class="flex min-w-0 flex-col"><span class="whitespace-nowrap">{{ row.name }}</span><span class="flex items-center gap-1 text-sm font-normal text-base-content/60">{{ row.logo }}<span>{{ row.identity }}</span></span></div></div></th>
 {%- when PeopleColumn::Role %}
-<td class="text-left">{{ row.role }}</td>
+<td class="{{ column.align().class() }}">{{ row.role }}</td>
 {%- when PeopleColumn::State %}
-<td class="text-left">{{ crate::components::StatusBadge::of(row.status, row.state) }}</td>
+<td class="{{ column.align().class() }}">{{ crate::components::StatusBadge::of(row.status, row.state) }}</td>
 {%- when PeopleColumn::SignedIn %}
-<td class="text-left whitespace-nowrap">{{ row.signed_in|safe }}</td>
+<td class="{{ column.align().class() }} whitespace-nowrap">{{ row.signed_in|safe }}</td>
 {%- when PeopleColumn::Buttons %}
-<td class="text-left">
+<td class="{{ column.align().class() }}">
 {%- if let Some(buttons) = row.buttons %}
 <div class="flex items-center justify-end gap-1">
 {%- match buttons.protected %}

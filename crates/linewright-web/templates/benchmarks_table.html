@@ -7,20 +7,20 @@
 {%- else %}
 <div class="overflow-x-auto">
 <table class="table">
-<thead><tr>{% for column in BenchmarksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in BenchmarksColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in rows %}
 <tr>
 {%- for column in BenchmarksColumn::ALL %}
 {%- match column %}
 {%- when BenchmarksColumn::Name %}
-<th class="{{ column.align() }}">{{ row.name }}</th>
+<th class="{{ column.align().class() }}">{{ row.name }}</th>
 {%- when BenchmarksColumn::Stage %}
-<td class="{{ column.align() }}">{{ row.stage }}</td>
+<td class="{{ column.align().class() }}">{{ row.stage }}</td>
 {%- when BenchmarksColumn::LastBenchmarkRun %}
-<td class="{{ column.align() }}">{% if let Some(last) = row.last %}<a class="link link-hover" href="{{ last.href }}">{{ last.launched }}</a>{% endif %}</td>
+<td class="{{ column.align().class() }}">{% if let Some(last) = row.last %}<a class="link link-hover" href="{{ last.href }}">{{ last.launched }}</a>{% endif %}</td>
 {%- when BenchmarksColumn::View %}
-<td class="{{ column.align() }}">{% call ui::row_view(row.view) %}{% endcall %}</td>
+<td class="{{ column.align().class() }}">{% call ui::row_view(row.view) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>

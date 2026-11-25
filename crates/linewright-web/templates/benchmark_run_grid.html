@@ -2,10 +2,10 @@
 <div id="grid">
 <div class="overflow-x-auto">
 <table class="table w-auto">
-<thead><tr><th class="text-left">Task</th>{% for name in benchmark_run.grid.configurations %}<th class="text-left">{{ name }}</th>{% endfor %}</tr></thead>
+<thead><tr><th class="{{ GridColumn::Task.align().class() }}">Task</th>{% for name in benchmark_run.grid.configurations %}<th class="{{ GridColumn::Configuration.align().class() }}">{{ name }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in benchmark_run.grid.rows %}
-<tr><th class="text-left">{{ row.task }}</th>{% for cell in row.cells %}<td class="text-left">{{ cell }}</td>{% endfor %}</tr>
+<tr><th class="{{ GridColumn::Task.align().class() }}">{{ row.task }}</th>{% for cell in row.cells %}<td class="{{ GridColumn::Configuration.align().class() }}">{{ cell }}</td>{% endfor %}</tr>
 {%- endfor %}
 </tbody>
 </table>
