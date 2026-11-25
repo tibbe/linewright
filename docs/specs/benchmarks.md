@@ -72,7 +72,7 @@ and an ID, which Linewright gives it
 - **No name.** A name that holds nothing once it is clean is no name.
   Linewright refuses a task, a benchmark or a configuration with no name, and
   a change to no name. On a screen, the field of such a name gets the message
-  of a required field that is empty ([Making](ui_patterns.md#making)).
+  of a required field that is empty ([Form dialog](components.md#form-dialog)).
 - **One of each name.** No two benchmarks have the same name. No two tasks of
   a benchmark have the same name. No two configurations of a benchmark run have
   the same name. Two names are the same when they hold the same characters in
@@ -84,7 +84,7 @@ and an ID, which Linewright gives it
   `as-is` ([Benchmark runs](#benchmark-runs)).
 - **Where an ID shows.** In addresses, in paths under the work directory, on
   the command line, and in "No such" for a thing that does not exist
-  ([Screen states](ui_patterns.md#screen-states)). Everywhere else, a screen
+  ([Edit dialog](components.md#edit-dialog)). Everywhere else, a screen
   names a thing by its name.
 
 ## Tasks
@@ -145,8 +145,9 @@ task of it, whatever its outcome.
   poll since `serve` started.
 - **Refusals on a screen.** [New task](#new-task) and [Run](runs.md#run) give
   these messages for a capture's refusals, other than for a required field that
-  is empty ([Making](ui_patterns.md#making)). The refusals of a run, and of a
-  capture before Linewright's first poll, show their reason above the buttons.
+  is empty ([Form dialog](components.md#form-dialog)). The refusals of a run,
+  and of a capture before Linewright's first poll, show their reason above the
+  buttons.
 
   | Refusal                                              | Message                                                       |
   | ---------------------------------------------------- | ------------------------------------------------------------- |
@@ -462,13 +463,17 @@ is not in BENCHMARK does not exist.
 ### Benchmarks
 
 - **Address.** `/benchmarks`.
-- **Layout.** The table "Benchmarks" ([Tables](ui_patterns.md#tables)), with
-  the filters and "New" ([Making](ui_patterns.md#making)).
-- **Filters.** Filters for the benchmark's name and its stage narrow the list.
-  The filter for the name keeps each benchmark whose name holds the text typed,
-  whatever its letter case. Name is an `input`, and Stage is a `select`.
-- **The table.** A row per benchmark, in the order of their names by the Unicode
-  Collation Algorithm.
+- **Layout.** The table of benchmarks.
+- **New.** "New", a [button](components.md#button), `btn-primary`, with the
+  screen's buttons ([Shell](shell.md)), which opens
+  [New benchmark](#new-benchmark).
+- **The table.** A [table](components.md#table):
+  - Name: "Benchmarks", which the screen does not show.
+  - Filters: Name and Stage, as below.
+  - Columns: those of the table below, each aligned left.
+  - Rows: a row per benchmark, in the order of their names by the Unicode
+    Collation Algorithm.
+  - A row's screen: the benchmark's [Benchmark](#benchmark).
 
   | Column          | Holds                                                |
   | --------------- | ---------------------------------------------------- |
@@ -476,12 +481,19 @@ is not in BENCHMARK does not exist.
   | Stage           | the benchmark's stage                                    |
   | Last benchmark run | when its last benchmark run was launched, linking to it, and nothing for a benchmark with none |
 
+- **Name.** A filter that searches: a search `input`, with the icon
+  `magnifying-glass` at its start, that takes the spare width of the row. It
+  keeps each benchmark whose name holds the text typed, whatever its letter
+  case.
+- **Stage.** A `select`, which keeps the benchmarks of the stage.
+
 ### New benchmark
 
-- **Layout.** A dialog titled "New benchmark"
-  ([Making](ui_patterns.md#making)).
-- **Fields.** "Name" and "Stage" ([Benchmarks](#benchmarks-1)), then "Create",
-  with the icon `plus`. "Stage" starts on the first stage, triage.
+- **Layout.** A [form dialog](components.md#form-dialog):
+  - Title: "New benchmark".
+  - Fields: "Name" and "Stage" ([Benchmarks](#benchmarks-1)). "Stage" starts on
+    the first stage, triage.
+  - The dialog's button: "Create", with the icon `plus`.
 - **Refusals.** The message for a name that another benchmark has is "A
   benchmark named NAME already exists."
 
@@ -490,80 +502,98 @@ is not in BENCHMARK does not exist.
 - **Address.** `/benchmarks/ID`.
 - **Layout.** The heading at the top, then the benchmark's benchmark runs and
   its tasks, each in a tab of its own.
-- **Heading.** In a [card with icon](components.md#card-with-icon), with the
-  icon `beaker`: the benchmark's name, with its stage under it.
-- **Tabs.** "Runs", then "Tasks". The screen opens on Runs,
-  or on Tasks while the benchmark has no benchmark runs. The tabs are daisyUI
-  `tabs` in the `tabs-border` style.
-- **Runs.** A table that fills the tab
-  ([Tables](ui_patterns.md#tables)), with a row per benchmark run, latest
-  first, and "New" on a benchmark with tasks
-  ([Making](ui_patterns.md#making)).
+- **Heading.** A [heading](components.md#heading):
+  - Icon: `beaker`.
+  - Title: the benchmark's name.
+  - Line: its stage.
+- **Edit.** "Edit", a [button](components.md#button), with the screen's
+  buttons ([Shell](shell.md)), which opens [Edit benchmark](#edit-benchmark).
+- **Tabs.** "Runs", then "Tasks", daisyUI `tabs` in the `tabs-border` style.
+  The screen opens on Runs, or on Tasks while the benchmark has no benchmark
+  runs.
+  - **Addresses.** A tab is at the address of the screen, then `/` and the
+    tab's name in lowercase, such as `/benchmarks/ID/tasks`.
+  - **Links.** The screen's link carries the tab that it shows, as it carries
+    a table's filters ([Filters](components.md#filters)). A link with no tab
+    opens on the tab that the screen opens on.
+- **Runs.** A [table](components.md#table) that fills the tab:
+  - Name: "Runs", which the tab shows in place of the table.
+  - Buttons: on a benchmark with tasks, "New", `btn-primary`, which opens
+    [New benchmark run](#new-benchmark-run).
+  - Columns: those of the table below. Tasks, Configurations, Duration and
+    Cost align right, and the others left.
+  - Rows: a row per benchmark run, latest first.
+  - A row's screen: the benchmark run's [Benchmark run](#benchmark-run).
 
   | Column         | Holds                                           |
   | -------------- | ----------------------------------------------- |
   | Launched       | when it was launched                               |
-  | State          | its state ([Benchmark run](#benchmark-run))           |
+  | State          | the [status badge](components.md#status-badge) of its state ([Benchmark run](#benchmark-run)) |
   | Tasks          | how many tasks it makes trials of  |
   | Configurations | how many configurations it has                  |
   | Duration       | its duration ([Benchmark run](#benchmark-run))        |
   | Cost           | its cost ([Benchmark run](#benchmark-run))            |
 
-- **Tasks.** A table that fills the tab ([Tables](ui_patterns.md#tables)), with
-  a row per task in the benchmark's order ([Benchmarks](#benchmarks-1)), and
-  "New" ([Making](ui_patterns.md#making)).
+- **Tasks.** A [table](components.md#table) that fills the tab:
+  - Name: "Tasks", which the tab shows in place of the table.
+  - Buttons: "New", `btn-primary`, which opens [New task](#new-task).
+  - Columns: those of the table below, each aligned left.
+  - Rows: a row per task, in the benchmark's order
+    ([Benchmarks](#benchmarks-1)).
+  - A row's screen: the task's [Task](#task).
 
   | Column        | Holds                                                         |
   | ------------- | ------------------------------------------------------------- |
-  | Task          | the task's name, with the first line of its criteria under it |
+  | Task          | the task's name, with the first line of its criteria under it, in `secondary-text` |
   | Captured from | the run it was captured from, linking to its Run              |
 
 ### Edit benchmark
 
-- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
-- **Fields.** "Name".
+- **Layout.** An [edit dialog](components.md#edit-dialog):
+  - Title: "Edit benchmark".
+  - Fields: "Name".
 - **Refusals.** As on [New benchmark](#new-benchmark).
 
 ### Task
 
 - **Address.** `/tasks/ID`.
 - **Layout.** The heading at the top, then the task's facts, then its criteria.
-- **Heading.** In a [card with icon](components.md#card-with-icon), with the
-  icon `beaker`: the task's name, with its stage under it. "Remove" is with the
-  screen's buttons ([Shell](shell.md)), after "Edit"
-  ([Editing](ui_patterns.md#editing)).
-- **Facts.** The task's facts are side by side in a row, each with its label
-  above its value, drawn as on [Benchmark run](#benchmark-run).
+- **Heading.** A [heading](components.md#heading):
+  - Icon: `beaker`.
+  - Title: the task's name.
+  - Line: its stage.
+- **Buttons.** With the screen's buttons ([Shell](shell.md)), each a
+  [button](components.md#button): "Edit", which opens [Edit task](#edit-task),
+  then "Remove", which opens [Remove task](#remove-task).
+- **Facts.** The task's facts, as [stats](components.md#stats).
 
   | Fact          | Holds                                                                 |
   | ------------- | --------------------------------------------------------------------- |
   | Captured from | the run it was captured from, linking to its Run                      |
-  | Item          | its item's title as it was at the start, then its number |
+  | Item          | its item, as an [item name](components.md#item-name), with the item's title as it was at the start |
   | Started       | when Linewright decided to start the run ([Tasks](#tasks))            |
 
-- **The task's item** is its title, then its number, `gap-1` apart. The title
-  is a daisyUI `link`, `link-hover`, to the item's [Item](board.md#item). The
-  number is in secondary text ([Type](ui_patterns.md#type)), and is a daisyUI
-  `link`, `link-hover`, to the item on GitHub.
-- **Criteria.** A [card with icon](components.md#card-with-icon) titled
-  "Criteria", with the icon `clipboard-document-check`, that holds the whole of
-  the task's criteria.
-- **After "Remove".** The message of what was removed
-  ([Confirming](ui_patterns.md#confirming)) is "Removed the task NAME." on
-  the benchmark's Tasks.
+- **Criteria.** A [card with icon](components.md#card-with-icon):
+  - Icon: `clipboard-document-check`.
+  - Title: "Criteria".
+  - Body: the whole of the task's criteria.
+- **After "Remove".** The benchmark's Tasks opens, with the
+  [success message](components.md#success-message) "Removed the task NAME."
 
 ### Edit task
 
-- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
-- **Fields.** "Name", then "Criteria".
+- **Layout.** An [edit dialog](components.md#edit-dialog):
+  - Title: "Edit task".
+  - Fields: "Name", then "Criteria".
 - **Refusals.** The message for a name that another task of the benchmark has
   is as for a capture ([Capturing](#capturing)).
 
 ### New task
 
-- **Layout.** A dialog titled "New task in NAME"
-  ([Making](ui_patterns.md#making)).
-- **Fields.** The fields below, then "Add task".
+- **Layout.** A [form dialog](components.md#form-dialog):
+  - Title: "New task in NAME".
+  - Fields: those of the table below.
+  - The dialog's button: "Add task".
 
   | Field    | Holds                                                                                                      |
   | -------- | ---------------------------------------------------------------------------------------------------------- |
@@ -573,16 +603,17 @@ is not in BENCHMARK does not exist.
 
 ### New benchmark run
 
-- **Layout.** A dialog titled "New benchmark run on NAME"
-  ([Making](ui_patterns.md#making)).
-- **Fields.** "Configurations", then "Repetitions"
-  ([Benchmark runs](#benchmark-runs)), then how many trials they make, such as
-  "2 configurations × 4 tasks × 3 repetitions: 24 trials". Then "Run
-  benchmark", with the icon `play`.
+- **Layout.** A [form dialog](components.md#form-dialog):
+  - Title: "New benchmark run on NAME".
+  - Fields: "Configurations", then "Repetitions"
+    ([Benchmark runs](#benchmark-runs)), then how many trials they make, such
+    as "2 configurations × 4 tasks × 3 repetitions: 24 trials".
+  - The dialog's button: "Run benchmark", with the icon `play`.
 - **Configurations.** Each configuration but `as-is` has "Name", and can set
   "model", "effort" and "session-timeout", and give the text of any file of the
-  brief. Each such configuration has "Remove". "Add a configuration", with the
-  icon `plus`, adds one at the end.
+  brief. Each such configuration has "Remove", a
+  [button](components.md#button). "Add a configuration", a
+  [button](components.md#button) with the icon `plus`, adds one at the end.
 - **Settings.** "effort" is a choice of its levels
   ([Configuration](operation.md#configuration)). Each setting starts as the one
   that a run of the stage uses when the dialog opens. A setting that the
@@ -594,8 +625,8 @@ is not in BENCHMARK does not exist.
   the text that a run of the stage uses when the dialog opens. A file whose text
   the maintainer does not change is not part of the configuration.
 - **Refusals.** The messages are as below, other than for a required field that
-  is empty ([Making](ui_patterns.md#making)). A benchmark with no tasks shows
-  its reason above the buttons.
+  is empty ([Form dialog](components.md#form-dialog)). A benchmark with no tasks
+  shows its reason above the buttons.
 
   | Refusal                                                               | Message                                        |
   | --------------------------------------------------------------------- | ---------------------------------------------- |
@@ -610,17 +641,17 @@ is not in BENCHMARK does not exist.
 - **Address.** `/benchmark-runs/ID`.
 - **Layout.** The heading at the top, then the benchmark run's facts, then its
   results ([Results](#results)): the chart, the table and the grid.
-- **Heading.** In a [card with icon](components.md#card-with-icon), with the
-  icon `beaker`: Benchmark run ID and its state. While the benchmark run is
-  running or waiting, "Cancel" is with the screen's buttons ([Shell](shell.md)).
+- **Heading.** A [heading](components.md#heading):
+  - Icon: `beaker`.
+  - Title: "Benchmark run ID".
+  - State: the [status badge](components.md#status-badge) of its state.
+- **Cancel.** While the benchmark run is running or waiting, "Cancel", a
+  [button](components.md#button), is with the screen's buttons
+  ([Shell](shell.md)). It opens [Cancel benchmark run](#cancel-benchmark-run).
 - **State.** The state shows as a status
-  ([Status](ui_patterns.md#status)): running as in flight, waiting as
+  ([Status](design_system.md#status)): running as in flight, waiting as
   paused, ended as done and cancelled as cancelled.
-- **Facts.** The benchmark run's facts are side by side in a row, each with its
-  label above its value. They are a daisyUI `stats`, drawn as a card is
-  ([Cards](ui_patterns.md#cards)). Each fact is a `stat`, with its label as the
-  `stat-title` and its value as the `stat-value`, in `text-xl` and
-  `font-semibold`.
+- **Facts.** The benchmark run's facts, as [stats](components.md#stats).
 
   | Fact        | Holds                                                                                   | Shown                          |
   | ----------- | --------------------------------------------------------------------------------------- | ------------------------------ |
@@ -634,24 +665,56 @@ is not in BENCHMARK does not exist.
 
 - **The chart.** A point for each configuration, labelled with its name. The
   vertical axis is the pass rate. The horizontal axis is the mean cost of a
-  trial or its mean time. The reader chooses which above the chart, at its
-  left, after "Pass rate vs": "Mean cost" or "Mean time", in a `select`. It
-  starts as "Mean cost".
-- **The chart's look.** The chart is a [chart](components.md#chart), in a
-  [card with icon](components.md#card-with-icon), with the icon `chart-bar`. The
-  card's title is "Pass rate vs" and the choice of the horizontal axis. The
-  chart runs to the left, right and bottom edges of the card.
+  trial or its mean time. The chart is a [card](components.md#card) that
+  holds two parts, one under the other, `gap-4` apart:
+  - **Top.** A row, with `px-4 pt-4`, that holds the card's `card-title`,
+    then the choice of the horizontal axis, side by side, centred on one
+    another, `gap-2` apart, and wraps where they do not fit. The `card-title`
+    holds the icon `chart-bar`, then "Pass rate vs". The choice is "Mean cost"
+    or "Mean time", in a small daisyUI `select`. It starts as "Mean cost".
+  - **The plot,** which runs to the left, right and bottom edges of the card.
+- **The plot** is as wide as its card, in the proportions 480:260.
+  - **The axes** are lines along its left and its bottom, in
+    `base-content/60`.
+  - **Grid lines** cross it at a pass rate of 50% and of 100%, in
+    `base-content/10`, as a daisyUI `divider` is.
+  - **The scale** of the horizontal axis runs from 0 to 110% of the largest
+    mean, so that no point is on its edge. Where the largest mean is 0, the
+    scale runs to $1 for cost and to 1 second for time.
+  - **Ticks.** The vertical axis has labels at 0%, 50% and 100%. The horizontal
+    axis has labels at 0, at half its scale and at its scale. The labels are in
+    `text-xs`, in `secondary-text`.
+  - **A point** is a `size-4` dot in `bg-primary`, with a `border-2` in
+    `base-200`, the colour of its card. Its name is beside it in `text-xs`: to
+    its right, or to its left when the point is in the right 40% of the plot.
+  - **"No results"** is in `secondary-text`, at the centre of the plot, which
+    then has no axes, grid lines or ticks.
 - **A point.** On hover, a point shows its configuration's name, pass rate and
   mean, in a daisyUI `tooltip`. A configuration with no pass rate, or no mean on
   the horizontal axis, has no point. A chart with no points shows "No results".
-- **The table.** "Configurations", in a
-  [card with icon](components.md#card-with-icon), with the icon
-  `adjustments-horizontal`: a row for each configuration, highest pass rate
-  first. Configurations with the same pass rate are in the order of the
-  benchmark run. Those with no pass rate are last, in the order of the benchmark
-  run. A configuration's row opens to a row for each task. A task's row opens to
-  a row for each of its trials. Tasks and trials are in the order in which the
-  benchmark run starts them ([Benchmark runs](#benchmark-runs)).
+- **The table.** A [table](components.md#table), but with rows that open in
+  place:
+  - Icon: `adjustments-horizontal`.
+  - Name: "Configurations".
+  - Columns: those of the table below. Configuration and Pass rate align
+    left, and the others right.
+  - Rows: a row for each configuration, highest pass rate first.
+    Configurations with the same pass rate are in the order of the benchmark
+    run. Those with no pass rate are last, in the order of the benchmark run. A
+    configuration's row opens to a row for each task. A task's row opens to a
+    row for each of its trials. Tasks and trials are in the order in which the
+    benchmark run starts them ([Benchmark runs](#benchmark-runs)).
+  - A row's buttons: on a configuration's row, "Edit", which opens
+    [Edit configuration](#edit-configuration).
+- **Opening in place.** A row that opens in place starts with a button, a
+  daisyUI `btn`, `btn-ghost` `btn-xs` `btn-square`, that shows a chevron. The
+  chevron points right (`chevron-right`) while the row is closed and down
+  (`chevron-down`) while it is open. A screen reader reads the button as what it
+  opens, such as "Show the tasks of opus-high". A row with nothing to open to
+  has no button there. Its first cell keeps its place. The column of these
+  buttons is the first, and has an empty head, an empty `th`. The column that
+  names each row is the second. Of the table's pages, only the configurations'
+  rows count, not the rows that they open to.
 
   | Column     | For a configuration                         | For a task                                  | For a trial                                                                              |
   | ---------- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -664,9 +727,10 @@ is not in BENCHMARK does not exist.
   | Leaks      | its leaks                                   | its trials of the task with a leak         |                                                                                           |
   | Unscored   | its unscored trials                        | its unscored trials of the task            |                                                                                           |
 
-- **A trial's status.** A trial's Pass rate shows as a status
-  ([Status](ui_patterns.md#status)). The first row that fits the trial gives the
-  name of its state and its status:
+- **A trial's status.** A trial's Pass rate is a
+  [status badge](components.md#status-badge). The first row that fits the trial
+  gives the name of its state and its status
+  ([Status](design_system.md#status)):
 
   | The trial | Name | Shows as |
   | --- | --- | --- |
@@ -687,7 +751,8 @@ is not in BENCHMARK does not exist.
   button as "Show the details of" and the trial's name
   ([A trial's name](#benchmark-runs)).
 - **A trial's score.** If the trial has a score ([Scoring](#scoring)), its row
-  opens to a line for each of these parts:
+  opens to a line for each of these parts, its label in `secondary-text`, then
+  its value:
 
   | Label | Value |
   | --- | --- |
@@ -704,33 +769,40 @@ is not in BENCHMARK does not exist.
   | its scorer made none | "No score.", then why its scorer made none ([Scoring](#scoring)) |
 
 - **A trial's transcripts.** A trial's row also opens to the transcripts of its
-  run and of its scorer, as Run shows a run's, once each has started. Each is
-  under its heading, "Run" or "Scorer".
-- **The grid.** "Passes by task", a daisyUI `table` in a
-  [card with icon](components.md#card-with-icon), with the icon `table-cells`.
-  It has a row for each task, under the head "Task", and a column for each
-  configuration, in the order of the table. A cell shows the passes of the
-  task under the configuration, such as "2 of 3". A cell also shows its leaks
-  and its trials without a score, if it has any.
+  run and of its scorer, once each has started, each a
+  [transcript](components.md#transcript). Each is under its heading, "Run" or
+  "Scorer".
+- **The grid.** A [table](components.md#table):
+  - Icon: `table-cells`.
+  - Name: "Passes by task".
+  - Columns: "Task", then a column for each configuration, in the order of the
+    table, each aligned left.
+  - Rows: a row for each task. A cell shows the passes of the task under the
+    configuration, such as "2 of 3". A cell also shows its leaks and its trials
+    without a score, if it has any.
 
 ### Remove task
 
-- **Layout.** A confirmation
-  ([Confirming](ui_patterns.md#confirming)): "Remove the task NAME and its
-  directory?"
+- **Layout.** A [confirmation](components.md#confirmation):
+  - Question: "Remove the task NAME and its directory?"
+  - The button that turns it down: "Cancel".
+  - The button that goes ahead: "Remove".
 
 ### Edit configuration
 
-- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
-- **Fields.** "Name".
+- **Layout.** An [edit dialog](components.md#edit-dialog):
+  - Title: "Edit configuration".
+  - Fields: "Name".
 - **Refusals.** The message for a name that another configuration has is as
   on [New benchmark run](#new-benchmark-run).
 
 ### Cancel benchmark run
 
-- **Layout.** A confirmation
-  ([Confirming](ui_patterns.md#confirming)): "Cancel benchmark run ID? This
-  stops its running trials and scorers."
+- **Layout.** A [confirmation](components.md#confirmation):
+  - Question: "Cancel benchmark run ID? This stops its running trials and
+    scorers."
+  - The button that turns it down: "Keep running".
+  - The button that goes ahead: "Cancel".
 
 ## Out of scope
 

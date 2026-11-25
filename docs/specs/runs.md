@@ -219,7 +219,7 @@ sessions.
 
 A run ends in one of these outcomes, each with its name in JSON.
 
-| Outcome                   | In JSON       | Meaning                                                                              | Shows as ([Status](ui_patterns.md#status)) |
+| Outcome                   | In JSON       | Meaning                                                                              | Shows as ([Status](design_system.md#status)) |
 | ------------------------- | ------------- | ------------------------------------------------------------------------------------ | --------- |
 | done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. | done      |
 | handed back               | `handed-back` | it could not finish and handed its item back.                                        | waiting   |
@@ -351,7 +351,7 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - **Running.** A tool call, the clone and the maintenance command are entries
   that run. Each shows `running` in place of its account until it ends. An
   entry whose session ends first shows `interrupted`. `running` shows as in
-  flight, and `interrupted` as cancelled ([Status](ui_patterns.md#status)).
+  flight, and `interrupted` as cancelled ([Status](design_system.md#status)).
 - **In full.** A transcript in full shows everything it holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
@@ -431,91 +431,56 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 ### Runs
 
 - **Address.** `/runs`.
-- **Layout.** The list of
-  runs, with its filters.
-- **Filters.** Filters for the item, the stage and the time since which runs
-  started narrow the list. Item and Since are `input`s, and Stage is a
-  `select`.
-- **The list of runs.** A table with a row per run, newest first.
+- **Layout.** The list of runs.
+- **The list of runs.** A [table](components.md#table):
+  - Name: "Runs", which the screen does not show.
+  - Filters: Item and Since, each an `input`, and Stage, a `select`. They keep
+    the runs of the item, of the stage, and that started since the time.
+  - Columns: those of the table below. Duration aligns right, and the others
+    left.
+  - Rows: a row per run, newest first.
+  - A row's screen: the run's [Run](#run).
 
 | Column   | Holds                                                                                          |
 | -------- | ---------------------------------------------------------------------------------------------- |
-| Outcome  | the run's outcome                                                                              |
+| Outcome  | the run's outcome, as a [status badge](components.md#status-badge)                             |
 | Run      | the run ID                                                                                     |
-| Item     | the item's title, then its number, or, for an item that Linewright has not read, its number alone; for an automation's run, "automation" and its name, linking to Automations |
+| Item     | the run's item, as an [item name](components.md#item-name); for an automation's run, "automation" and its name, linking to Automations |
 | Stage    | the run's stage                                                                                |
-| Started  | when the run started, with an automation's run by hand marked there                            |
+| Started  | when the run started, then, for an automation's run by hand, "by hand"                         |
 | Duration | the run's duration                                                                             |
 
-- **The item.** The item's title and its number are `gap-1` apart. The title
-  is a daisyUI `link`, `link-hover`, to the item's [Item](board.md#item). The
-  number is in secondary text ([Type](ui_patterns.md#type)), and is a daisyUI
-  `link`, `link-hover`, to the item on GitHub. A number alone is in secondary
-  text, and is a daisyUI `link`, `link-hover`, to the item on GitHub.
 - **"By hand"**, the mark of an automation's run by hand, is a daisyUI
   `badge`, `badge-sm`, with no colour or style class.
 
 ### Run
 
 - **Address.** `/runs/ID`.
-- **Layout.** The heading at
-  the top, then the run's transcripts ([Transcripts](#transcripts)), each under
-  its session's heading.
-- **Heading.** A [card with icon](components.md#card-with-icon), with the icon
-  `command-line`. It holds the run ID, then ", by hand" for an automation's run
-  by hand, and "(it started no session)" for a run that ended without a session.
-  Under them is the run's item.
-- **The heading's item** is the item's title, then a space, then its number. The
-  title and the number wrap between words, as one text. The title is a
-  daisyUI `link`, `link-hover`, to the item's [Item](board.md#item). The number
-  is in secondary text ([Type](ui_patterns.md#type)), and is a daisyUI `link`,
-  `link-hover`, to the item on GitHub. An item that Linewright has not read is
-  its number alone, in secondary text, a daisyUI `link`, `link-hover`, to the
-  item on GitHub. For an automation's run, it is "automation" and its name,
-  linking to Automations.
-- **A session's heading.** The session's number and when it started, such as
-  "session 1: started 5 minutes ago", then how long it has run. This time does
-  not include a wait for the usage limit to reset. Where Linewright does not
-  know when the session ended, such as when a restart interrupted its run,
-  the time goes up to its last entry.
-- **The transcripts** are each a [transcript](components.md#transcript).
-- **A session's settings.** Under its heading, the session's model and effort
-  open on click to where its settings and brief files came from.
-- **Views.** The screen shows the transcripts as the agent's own default view
-  does. With the verbose switch, it shows them as the agent's verbose view
-  does: for example, the agent's thinking is open only with the switch. The
-  screen never shows what the agent was told other than its prompts. The
-  verbose switch is a daisyUI `toggle`.
-- **Prompts.** The brief and each follow-up are entries, each shown as its
-  first line.
-- **Durations.** Each entry that runs shows how long it ran, and the time
-  goes up while the entry runs. If its session ends first, the time stops
-  there, and where Linewright does not know that end, the entry shows no time.
-  The entry's account does not repeat the time.
-- **Working.** While a followed session's turn goes on and no entry runs, the
-  session's last line says "working" and how long the turn has gone on. The time
-  goes up as the turn goes on. Between turns, there is no such line. While the
-  session waits for the usage limit to reset, the line says so and until when
-  instead, such as "waiting for the usage limit, until 14:30".
-- **Folding.** An entry opens on click to what its line leaves out: a tool
-  call's full input and result and its sub-agent's work, the clone's error, the
-  maintenance command's output, the full text of the brief or a follow-up, or
-  the thinking a "thought" entry stands for. A "thought" entry with no thinking
-  text does not open. An entry that failed starts open. A sub-agent's work
-  starts folded to the line of the call that started it, with the count of its
-  entries.
-- **Verbose.** The verbose switch is set once for the screen, and opens
-  everything, a session's settings too.
+- **Layout.** The heading at the top, then the run's transcripts
+  ([Transcripts](#transcripts)).
+- **Heading.** A [heading](components.md#heading):
+  - Icon: `command-line`.
+  - Title: the run ID, then ", by hand" for an automation's run by hand, and
+    "(it started no session)" for a run that ended without a session.
+  - Line: the run's item, an
+    [item name in text](components.md#item-name-in-text). For an automation's
+    run, it is "automation" and its name, linking to Automations.
+- **The transcripts.** A [transcript](components.md#transcript), verbose while
+  the verbose switch is on.
+- **The verbose switch.** A daisyUI `toggle`, set once for the screen.
 - **Following.** A run in flight is followed. The screen stays at the bottom
-  until the reader scrolls up, and then offers "Jump to the latest entry".
-  "Jump to the latest entry" is a button with the icon `arrow-down` and
-  `shadow-md`, fixed at the bottom right of the screen, `bottom-6` and
-  `right-6`.
+  until the reader scrolls up, and then offers "Jump to the latest entry", a
+  [button](components.md#button) with `shadow-md`, fixed at the bottom right
+  of the screen, `bottom-6` and `right-6`:
+  - Icon: `arrow-down`.
+  - Label: "Jump to the latest entry".
 - **Capturing.** A run that can be captured
-  ([Capturing](benchmarks.md#capturing)) has "Add task" with the screen's
-  buttons ([Shell](shell.md)). It opens a dialog titled "Add task to a
-  benchmark" ([Making](ui_patterns.md#making)), with these fields, then "Add
-  task":
+  ([Capturing](benchmarks.md#capturing)) has "Add task", a
+  [button](components.md#button), with the screen's buttons
+  ([Shell](shell.md)). It opens a [form dialog](components.md#form-dialog):
+  - Title: "Add task to a benchmark".
+  - Fields: those of the table below.
+  - The dialog's button: "Add task".
 
   | Field          | Holds                                                                                                   |
   | -------------- | ------------------------------------------------------------------------------------------------------- |
@@ -526,10 +491,10 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 
   - **A new benchmark's refusals.** Linewright refuses a new benchmark as on
     [New benchmark](benchmarks.md#new-benchmark).
-  - **What was made.** The message is "Captured run ID as the task NAME in the
-    benchmark BENCHMARK." For a new benchmark, the message is "Captured run ID
-    as the task NAME in the new benchmark BENCHMARK." BENCHMARK links to the
-    benchmark's Tasks.
+  - **What was made.** A [success message](components.md#success-message):
+    "Captured run ID as the task NAME in the benchmark BENCHMARK." For a new
+    benchmark, it is "Captured run ID as the task NAME in the new benchmark
+    BENCHMARK." BENCHMARK links to the benchmark's Tasks.
 
 ## Out of scope
 

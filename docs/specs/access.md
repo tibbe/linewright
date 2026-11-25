@@ -81,6 +81,8 @@ and out and to allow a client: only the UI gives them.
 
 - **What the reader's role does not allow.** A screen shows a button only
   when the reader's role allows its action.
+- **At once.** When two people change the same thing, the change saved last
+  is the one that Linewright keeps.
 - **An access level that is too low.** Linewright refuses the action, with
   "This needs the LEVEL access level." and the level that it needs.
 - **Logged.** Linewright's log ([The log](operation.md#the-log)) records each
@@ -300,15 +302,9 @@ For each authorization request:
 ### Sign in
 
 - **Address.** `/sign-in`.
-- **Layout.** A card in the middle of the page. The card holds the heading,
-  then the message, where there is one, then the identity providers.
-- **The page** has the card in its middle:
-  `flex min-h-screen items-center justify-center p-4`.
-- **The card** is drawn as a card is ([Cards](ui_patterns.md#cards)), with
-  `w-full max-w-100 p-12`.
-- **Heading.** "Sign in to Linewright", and under it the repository's name.
-  The heading is in `text-3xl` and `font-bold`, centred, with `mb-2` under it.
-  The repository's name is in secondary text, centred, with `mb-6` under it.
+- **Layout.** A [card page](components.md#card-page):
+  - Heading: "Sign in to Linewright".
+  - Body: the message, where there is one, then the identity providers.
 - **The message.** It says why the person is on the screen, where there is a
   reason. It is a daisyUI `alert`, with `mb-6` under it. It is in the
   `alert-error` style, but for "You signed out." and "Your sign-in ended.",
@@ -324,27 +320,28 @@ For each authorization request:
   | the provider refused or failed                  | "Signing in with PROVIDER failed."           |
 
 - **Identity providers.** A button for each identity provider that
-  Linewright offers ([Signing in](#signing-in)), Google first: "Sign in with
-  Google" and "Sign in with GitHub", each with its provider's logo. The
-  buttons are one under the other, in `flex flex-col items-center gap-2`.
+  Linewright offers ([Signing in](#signing-in)), Google first. The buttons are
+  one under the other, in `flex flex-col items-center gap-2`.
 - **Google's button** is a medium daisyUI `btn`, `btn-md`, in
-  `bg-white text-black border-[#e5e5e5]`. Before its label is Google's "G",
-  [`google-g.svg`](assets/google-g.svg), at `size-4`.
+  `bg-white text-black border-[#e5e5e5]`:
+  - Icon: Google's "G", [`google-g.svg`](assets/google-g.svg), at `size-4`.
+  - Label: "Sign in with Google".
 - **GitHub's button** is a medium daisyUI `btn`, `btn-md`, in
-  `bg-black text-white border-black`. Before its label is Octicons'
-  [`mark-github`](https://primer.style/octicons/icon/mark-github-16) at
-  `size-4`, in white.
+  `bg-black text-white border-black`:
+  - Icon: Octicons'
+    [`mark-github`](https://primer.style/octicons/icon/mark-github-16) at
+    `size-4`, in white.
+  - Label: "Sign in with GitHub".
 
 ### Consent
 
 - **Address.** `/oauth/authorize`.
-- **Layout.** A card in the middle of the page. The page, the card and the
-  heading look as on Sign in. The card holds the heading, then the facts, then
-  the warning, where there is one, then "Allow" and "Deny".
-- **Heading.** "Allow NAME to act as you?", with the client's name as the client
-  gives it, or "an unnamed client" without one.
-- **Facts.** [Facts](components.md#facts) in the screen's card, with `mb-6`
-  under them.
+- **Layout.** A [card page](components.md#card-page):
+  - Heading: "Allow NAME to act as you?", with the client's name as the client
+    gives it, or "an unnamed client" without one.
+  - Body: the facts, then the warning, where there is one, then "Allow" and
+    "Deny".
+- **Facts.** [Facts](components.md#facts), with `mb-6` under them.
 
   | Fact              | Holds                                 | Shown                                    |
   | ----------------- | ------------------------------------- | ---------------------------------------- |
@@ -354,15 +351,17 @@ For each authorization request:
 - **The warning.** For a loopback redirect URI: "This client is an app on
   this computer. Linewright cannot check which app." It is a daisyUI `alert`
   in the `alert-warning` style, with `mb-6` under it.
-- **"Allow" and "Deny"** are in `grid grid-cols-2 gap-2`. "Allow" is a
-  `btn-primary`, with the icon `check`. "Deny" has the icon `x-mark`.
+- **"Allow" and "Deny"** are in `grid grid-cols-2 gap-2`:
+  - "Allow": a [button](components.md#button), `btn-primary`, with the icon
+    `check`.
+  - "Deny": a [button](components.md#button), with the icon `x-mark`.
 
 ### Authorization error
 
 - **Address.** `/oauth/authorize`.
-- **Layout.** A card in the middle of the page. The page, the card and the
-  heading look as on Sign in. The card holds the heading "Linewright cannot
-  authorize this client", then the message.
+- **Layout.** A [card page](components.md#card-page):
+  - Heading: "Linewright cannot authorize this client".
+  - Body: the message.
 - **The message.** A daisyUI `alert` in the `alert-error` style.
 
   | Case                                                  | Message                                                 |
@@ -375,9 +374,15 @@ For each authorization request:
 ### People
 
 - **Address.** `/people`.
-- **Layout.** The table "People" ([Tables](ui_patterns.md#tables)).
-- **The table.** A row per person ([People](#people)), in the order of their
-  names by the Unicode Collation Algorithm.
+- **Layout.** The table of people.
+- **The table.** A [table](components.md#table):
+  - Name: "People", which the screen does not show.
+  - Columns: those of the table below, each aligned left.
+  - Rows: a row per person ([People](#people)), in the order of their names by
+    the Unicode Collation Algorithm.
+  - A row's buttons: "Edit", which opens [Edit person](#edit-person), then
+    "Disable" on an enabled person and "Enable" on a disabled one. "Disable"
+    has the icon `lock-closed`, and "Enable" the icon `lock-open`.
 
   | Column    | Holds                                                                                 |
   | --------- | ------------------------------------------------------------------------------------- |
@@ -386,27 +391,25 @@ For each authorization request:
   | State     | "enabled" or "disabled"                                                               |
   | Signed in | when they last signed in                                                              |
 
-- **The Person column** holds the person's avatar, then, `gap-3` after it,
-  their name over a second line. The second line holds their identity
-  provider's logo, then their identity, `gap-1` apart. It is in `text-sm`, in
-  secondary text ([Type](ui_patterns.md#type)).
+- **The Person column** holds the person's [avatar](components.md#avatar),
+  then, `gap-3` after it, their name over a second line. The second line holds
+  their identity provider's logo, then their identity, `gap-1` apart. It is in
+  `text-sm`, in `secondary-text`.
 - **The logo** is `size-[1em]`: Google's "G",
   [`google-g.svg`](assets/google-g.svg), for Google, and Octicons'
   [`mark-github`](https://primer.style/octicons/icon/mark-github-16) for
   GitHub.
-- **A row's buttons.** "Edit" ([Editing](ui_patterns.md#editing)), then
-  "Disable" on an enabled person and "Enable" on a disabled one. "Disable"
-  has the icon `lock-closed`, and "Enable" the icon `lock-open`.
 - **The named manager and the last manager.** "Edit" and "Disable" are
   disabled on their rows. On hover, each shows the message of
   [Edit person](#edit-person) for that person.
-- **State.** "enabled" shows as done, and "disabled" as cancelled
-  ([Status](ui_patterns.md#status)).
+- **State.** A [status badge](components.md#status-badge): "enabled" shows as
+  done, and "disabled" as cancelled ([Status](design_system.md#status)).
 
 ### Edit person
 
-- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
-- **Fields.** "Role", a choice of the roles ([Roles](#roles)), in a `select`.
+- **Layout.** An [edit dialog](components.md#edit-dialog):
+  - Title: "Edit person".
+  - Fields: "Role", a choice of the roles ([Roles](#roles)), in a `select`.
 - **Refusals.** The messages are as below, above the buttons. A tool that
   disables such a person gets the same message.
 
@@ -417,16 +420,23 @@ For each authorization request:
 
 ### Disable person
 
-- **Layout.** A confirmation ([Confirming](ui_patterns.md#confirming)):
-  "Disable NAME? This signs them out and ends their authorizations."
+- **Layout.** A [confirmation](components.md#confirmation):
+  - Question: "Disable NAME? This signs them out and ends their
+    authorizations."
+  - The button that turns it down: "Cancel".
+  - The button that goes ahead: "Disable".
 
 ### Authorizations
 
 - **Address.** `/authorizations`.
-- **Layout.** The table "Authorizations"
-  ([Tables](ui_patterns.md#tables)). The screen has no breadcrumbs.
-- **The table.** A row per authorization of the reader, newest first. Its
-  card is a [card with icon](components.md#card-with-icon), with the icon `key`.
+- **Layout.** The table of authorizations. The screen has no breadcrumbs.
+- **The table.** A [table](components.md#table):
+  - Icon: `key`.
+  - Name: "Authorizations".
+  - Columns: those of the table below, each aligned left.
+  - Rows: a row per authorization of the reader, newest first.
+  - A row's buttons: "End", with the icon `link-slash`, which opens
+    [End authorization](#end-authorization).
 
   | Column        | Holds                                     |
   | ------------- | ----------------------------------------- |
@@ -435,12 +445,12 @@ For each authorization request:
   | Allowed       | when the authorization began              |
   | Ends          | when the authorization ends               |
 
-- **A row's buttons.** "End", with the icon `link-slash`.
-
 ### End authorization
 
-- **Layout.** A confirmation ([Confirming](ui_patterns.md#confirming)):
-  "End the authorization of NAME? NAME can no longer act as you."
+- **Layout.** A [confirmation](components.md#confirmation):
+  - Question: "End the authorization of NAME? NAME can no longer act as you."
+  - The button that turns it down: "Cancel".
+  - The button that goes ahead: "End".
 
 ## Out of scope
 

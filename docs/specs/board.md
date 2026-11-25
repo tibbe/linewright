@@ -79,17 +79,18 @@ An item's state ([State](repository.md#state)) is shown in these words.
 ### Board
 
 - **Address.** `/`.
-- **Layout.** The board is
-  six columns side by side. Lanes cross them, one under another, a lane per
-  piece of work. Each card is in its lane and in the column of its item's state
+- **Layout.** The filters, then the board. The board is six columns side by
+  side. Lanes cross them, one under another, a lane per piece of work. Each card
+  is in its lane and in the column of its item's state
   ([State](repository.md#state)). As the reader scrolls, the column heads stay
   at the top, with the head of the lane they are in under them.
-- **Filters.** Person ([Filtering by person](#filtering-by-person)).
+- **Filters.** [Filters](components.md#filters) that hold one filter, Person
+  ([Filtering by person](#filtering-by-person)).
 - **Columns.** The columns below, in this order. The columns share the
   board's width, each at least 200px, and all six fit beside the navigation
   rail from 1440px wide.
-- **The column heads** are a row in `bg-base-100`, `h-8` tall, with each
-  column's name in `font-semibold`.
+- **The column heads** are a row in `bg-base-100`, `h-8` tall, that holds each
+  column's name, in `font-semibold`.
 - **No cap.** A column is never cut.
 - **Needing a person.** The screen's title carries the count of cards in Needs a
   person on the whole board, however it is filtered.
@@ -118,18 +119,18 @@ An item's state ([State](repository.md#state)) is shown in these words.
   the total. Its cards are its managed tickets. Otherwise, the head shows the
   item's title and number, and the item is its one card.
 - **Its look.** A lane stands apart from the screen around it, and each of
-  its cards stands apart from the lane. A lane is drawn as a card is
-  ([Cards](ui_patterns.md#cards)), with `px-2` at its sides and `pb-2` at its
-  foot. In a lane, the columns are `gap-2` apart, and so are the cards in a
-  column.
+  its cards stands apart from the lane. A lane is in the colour and shadow of a
+  [card](components.md#card), with `px-2` at its sides and `pb-2` at its foot.
+  In a lane, the columns are `gap-2` apart, and so are the cards in a column.
 - **A lane's head** is its top row, in `bg-base-200`, at least `h-10` tall, with
-  `pt-2` above its text. It is one line in `font-semibold`. It holds the item's
-  icon, `size-[1em]`, then the item's title, then its number, then the rest of
-  the head, `gap-1` apart. The icon is Octicons' `issue-opened` for an issue or
-  `git-pull-request` for a pull request. The title is a daisyUI `link`,
-  `link-hover`, to the item's [Item](#item). The number is in secondary text
-  ([Type](ui_patterns.md#type)) and `font-normal`, and is a daisyUI `link`,
-  `link-hover`, to the item on GitHub. Only the title is cut to fit.
+  `pt-2` above its text. It is one line in `font-semibold`, of which only the
+  title is cut to fit. It holds, `gap-1` apart:
+  - Icon: the item's icon ([Icons](design_system.md#icons)), `size-[1em]`.
+  - Title: the item's title, a daisyUI `link`, `link-hover`, to the item's
+    [Item](#item), cut to fit.
+  - Number: the item's number, in `secondary-text` and `font-normal`, a daisyUI
+    `link`, `link-hover`, to the item on GitHub.
+  - The rest of the head.
 - **Finished lanes.** A lane is finished once its cards are all in Done and,
   where it has a tracking issue, that issue is done. It shows as its head
   alone, with when it finished: when the last of its cards entered Done or
@@ -137,7 +138,7 @@ An item's state ([State](repository.md#state)) is shown in these words.
   lanes sit together under one fold that says how many there are, opens
   on click and shows only while there is one. The finished lanes are under a
   daisyUI `divider`. Their fold, and each finished lane, is a daisyUI
-  `collapse` with `collapse-arrow`.
+  `collapse`, `collapse-arrow`.
   A finished lane leaves the board when it finished before the start of the
   Done window (`done-window`).
 - **Order of lanes.** The unfinished lanes come first, latest changed first,
@@ -154,27 +155,25 @@ says what its column does not: what sets the item apart from the rest of its
 column, what a person acts on, or since when it has sat. A card with nothing to
 add is its title and number alone.
 
-- **Its look.** A card is a daisyUI `card`, `card-sm`, drawn as a card is
-  ([Cards](ui_patterns.md#cards)), but in `bg-base-100`, and with its line
-  `gap-1` under its `card-title`.
-- **Its `card-title`** is one line. It holds the item's icon, `size-[1em]`,
-  then the item's title, then its number. The icon is Octicons' `issue-opened`
-  for an issue or `git-pull-request` for a pull request.
-- **Its title** is a daisyUI `link`, `link-hover`, to the item's
-  [Item](#item), cut to fit.
-- **Its number** is `gap-1` after the title, in secondary text
-  ([Type](ui_patterns.md#type)) and `font-normal`. It is a daisyUI `link`,
-  `link-hover`, to the item on GitHub, and always shows.
-- **Its line** is the text of its `card-body`, under its title. An item that
-  it names is its number, a daisyUI `link`, `link-hover`, to the item on
-  GitHub. A pull request has Octicons' `git-pull-request`, `size-[1em]`, `gap-1`
-  before its number.
+- **Its look.** A card is a daisyUI `card`, `card-sm`, in `bg-base-100`, with
+  `shadow-xs` and no border. It holds:
+  - `card-title`: one line that holds:
+    - Icon: the item's icon ([Icons](design_system.md#icons)), `size-[1em]`.
+    - Title: the item's title, a daisyUI `link`, `link-hover`, to the item's
+      [Item](#item), cut to fit.
+    - Number: the item's number, `gap-1` after the title, in `secondary-text`
+      and `font-normal`, a daisyUI `link`, `link-hover`, to the item on
+      GitHub. It always shows.
+  - Line: the text of its `card-body`, `gap-1` under its `card-title`, in
+    `secondary-text`. An item that it names is its number, a daisyUI `link`,
+    `link-hover`, to the item on GitHub. A pull request has Octicons'
+    `git-pull-request`, `size-[1em]`, `gap-1` before its number.
 - **The first that holds.** Where more than one row of a column holds, the
   line is the first.
 - **Card status.** A card whose line has a card status shows it. Card
   statuses, most pressing first: failed, waiting for a person, in flight,
   paused or queued. Each shows as a status
-  ([Status](ui_patterns.md#status)): failed as failed, waiting for a person
+  ([Status](design_system.md#status)): failed as failed, waiting for a person
   as waiting, in flight as in flight, and paused or queued as paused. A card
   that shows a card status has an edge `3px` wide at its start in its colour,
   and its icon, `size-[1em]`, in `base-content`, `gap-1` before its line.
@@ -229,7 +228,7 @@ What stops a pull request merging, in the order the line picks from:
 
 #### Filtering by person
 
-The board has one filter ([Filters](ui_patterns.md#filters)), Person: it
+The board has one filter ([Filters](components.md#filters)), Person: it
 narrows the board to the cards that match a person. A card matches whoever
 is party to its item, to a pull request on it or, for a ticket, to its
 tracking issue: a person who opened it, is assigned to it or reviews it.
@@ -254,53 +253,41 @@ tracking issue: a person who opened it, is assigned to it or reviews it.
 ### Item
 
 - **Address.** `/items/N`.
-- **Layout.** #N's heading at the top, then its facts
-  ([Facts](components.md#facts)) in the order below, then its runs.
-- **Heading.** A [card with icon](components.md#card-with-icon), whose icon is
-  Octicons' `issue-opened` for an issue or `git-pull-request` for a pull
-  request. Its `card-title` holds, after the icon, #N's title, then a space,
-  then its number. The title and the number wrap between words, as one
-  text. Under the `card-title` is when `serve` last read #N, such as "as of 2
-  minutes ago".
-- **The heading's title** is a daisyUI `link`, `link-hover`, to this screen.
-- **The heading's number** is in secondary text ([Type](ui_patterns.md#type))
-  and `font-normal`, and is a daisyUI `link`, `link-hover`, to #N on GitHub.
-- **Runs.** #N's latest ten runs, as a list of runs ([Runs](runs.md#runs-1))
-  without the Item column. A last row, across the table, says how many earlier
-  runs were left out and links to Runs narrowed to #N. The table's card is a
-  [card with icon](components.md#card-with-icon), with the icon `command-line`.
+- **Layout.** #N's heading at the top, then its facts in the order below, then
+  its runs.
+- **Heading.** A [heading](components.md#heading):
+  - Icon: #N's icon ([Icons](design_system.md#icons)).
+  - Title: #N, an [item name in text](components.md#item-name-in-text), whose
+    title links to this screen.
+  - Line: when `serve` last read #N, such as "as of 2 minutes ago".
+- **Facts.** [Facts](components.md#facts) in a [card](components.md#card),
+  from the table below.
+- **Runs.** A [table](components.md#table) of #N's latest ten runs:
+  - Icon: `command-line`.
+  - Name: "Runs".
+  - Columns and rows: those of the list of runs on [Runs](runs.md#runs-1),
+    without the Item column.
+  - A last row, across the table, that says how many earlier runs were left
+    out and links to Runs narrowed to #N.
 - **Its card.** On this screen, an item without a card of its own, such as a
   pull request on the card of the issue that it closes, has the card it
   would have on its own. A tracking issue's card is its lane head.
-- **Related items.** An item that a fact lists is one line. It holds the
-  item's icon, `size-[1em]`, then its status icon, `size-[1em]`, then its
-  title, then its number, `gap-1` apart. The items that one fact lists are
-  `gap-4` apart.
-- **A related item's icon** is Octicons' `issue-opened` for an issue or
-  `git-pull-request` for a pull request.
-- **A related item's status icon** is the icon of the card status that its
-  card shows ([Cards](#cards)), in that status's colour. An item whose card
-  shows no card status has no status icon.
-- **A related item's title** is a daisyUI `link`, `link-hover`, to the
-  item's Item.
-- **A related item's number** is in secondary text
-  ([Type](ui_patterns.md#type)), and is a daisyUI `link`, `link-hover`, to the
-  item on GitHub.
-- **A related tracking issue** has the rest of its lane head
-  ([Lanes](#lanes)) `gap-1` after its number.
-- **A related item that Linewright has not read** is its number alone, in
-  secondary text, a daisyUI `link`, `link-hover`, to the item on GitHub.
+- **Related items.** An item that a fact lists is one line. The items that one
+  fact lists are `gap-4` apart. The line holds, `gap-1` apart:
+  - Icon: the item's icon ([Icons](design_system.md#icons)), `size-[1em]`.
+  - Status icon: the icon of the card status that its card shows
+    ([Cards](#cards)), `size-[1em]`, in that status's colour. An item whose
+    card shows no card status has no status icon.
+  - Item: an [item name](components.md#item-name).
+  - For a tracking issue, the rest of its lane head ([Lanes](#lanes)).
 - **Items in Waiting for and in what keeps #N out.** An item named in Waiting
-  for, or in what keeps #N out under State, is its title, then a space, then
-  its number. The item and the rest of its sentence wrap between words, as
-  one text. The title is a daisyUI `link`, `link-hover`, to the item's Item. The
-  number is in secondary text, and is a daisyUI `link`, `link-hover`, to the
-  item on GitHub. An item that Linewright has not read is its number alone, in
-  secondary text, a daisyUI `link`, `link-hover`, to the item on GitHub.
+  for, or in what keeps #N out under State, is an
+  [item name in text](components.md#item-name-in-text), which wraps with the
+  rest of its sentence.
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's state ([States](#states)), then its card's line where it says more, with its card status ([Cards](#cards)), such as "Being implemented · implementation · 12m"; for a tracking issue, its state, then, once its lane is finished, when it finished, such as "Done · finished 2 days ago"; for an item that is not managed, its state where it has one, then "Left alone" and what keeps it out ([Managed items](repository.md#managed-items)), such as "not marked for Linewright" | always                         |
+| State          | #N's state ([States](#states)), then its card's line where it says more, as a [status text](components.md#status-text) of its card status ([Cards](#cards)), such as "Being implemented · implementation · 12m"; for a tracking issue, its state, then, once its lane is finished, when it finished, such as "Done · finished 2 days ago"; for an item that is not managed, its state where it has one, then "Left alone" and what keeps it out ([Managed items](repository.md#managed-items)), such as "not marked for Linewright" | always                         |
 | Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it ([Holds](runs.md#holds)), such as "the usage limit, until 14:30" | while it waits for any         |
 | Tracking issue | a ticket's tracking issue                                                                                                              | while there is one             |
 | Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |
