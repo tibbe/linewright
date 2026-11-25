@@ -35,7 +35,7 @@ use linewright_core::transcript::{
 use super::buttons::{ScreenButton, Verb};
 use super::caller::{Reader, Signed};
 use super::capture::{self, Offer};
-use super::components::StatusBadge;
+use super::components::{EntryStatus, StatusBadge};
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon, IconSize};
 use super::names::Naming;
@@ -621,12 +621,20 @@ struct Said {
 }
 
 /// The account of an entry that runs as far as `course` says, as markup:
-/// `running`, `interrupted`, and how it ended when it failed, each as its
-/// status (`docs/specs/runs.md`, Transcripts, Running).
+/// `running` and `interrupted` as their status's icon and word
+/// (`docs/specs/components.md`, Transcript, A status in an entry), and how
+/// it ended when it failed as its status's badge (`docs/specs/runs.md`,
+/// Transcripts, Running).
 fn account_html(course: Course<Said>) -> String {
     match course {
-        Course::Running => status_html(Status::InFlight, RUNNING),
-        Course::Interrupted => status_html(Status::Cancelled, INTERRUPTED),
+        Course::Running => render(&EntryStatus {
+            status: Status::InFlight,
+            word: RUNNING,
+        }),
+        Course::Interrupted => render(&EntryStatus {
+            status: Status::Cancelled,
+            word: INTERRUPTED,
+        }),
         Course::Ended(Said { said, failed: true }) => status_html(Status::Failed, &said),
         Course::Ended(Said {
             said,

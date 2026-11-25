@@ -28,13 +28,13 @@ pub(super) enum Piece<Words = Html> {
 }
 
 /// An item a fact lists (`docs/specs/board.md`, Item, Related items), in
-/// the repo `repo`: the icon of an issue or a pull request, then its card
-/// status's icon, if its card shows one, then its name.
+/// the repo `repo`.
 pub(super) enum RelatedItem {
-    /// An item that Linewright has read, named by its title, cut to fit its
-    /// line, then its number. A tracking issue has a `rest`, the rest of its
-    /// lane's head after them, empty where the head has nothing more, and
-    /// is drawn as its lane's head is.
+    /// An item that Linewright has read, on one line: the icon of an issue
+    /// or a pull request, then its card status's icon, if its card shows
+    /// one, in the status's colour, then its title, cut to fit its line,
+    /// and its number. A tracking issue has a `rest`, the rest of its
+    /// lane's head after them, where the head has more.
     Read {
         kind: ItemKind,
         status: Option<Status>,
@@ -44,12 +44,7 @@ pub(super) enum RelatedItem {
         rest: Option<Html>,
     },
     /// An item that Linewright has not read, named by its number alone.
-    Unread {
-        kind: ItemKind,
-        status: Option<Status>,
-        number: Number,
-        repo: String,
-    },
+    Unread { number: Number, repo: String },
 }
 
 impl<Words> Fact<Words> {

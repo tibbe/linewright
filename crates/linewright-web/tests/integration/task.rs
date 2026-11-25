@@ -92,6 +92,9 @@ async fn a_task_shows_its_name_and_stage_its_facts_and_the_whole_of_its_criteria
             "https://github.com/owner/widgets/issues/1130"
         ]
     );
+    let item = select(&html, "#task .stats .stat")[1];
+    assert_title_then_number_gap_1_apart(item);
+    assert_no_words_loose_in_a_flex(&html, "#task");
     let criteria = select(&html, "#criteria")[0];
     assert_eq!(
         text(select_in(criteria, ".card-title")[0]),

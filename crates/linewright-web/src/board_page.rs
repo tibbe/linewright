@@ -15,7 +15,7 @@ use linewright_core::phrase::Status;
 use super::caller::Reader;
 use super::cards::{self, lane_head, line_html};
 use super::html::Html;
-use super::item_parts::{Cut, ItemNumberLink, ItemTitle};
+use super::item_parts::{OneLineItem, Weight};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, render, with_filters};
 
@@ -140,18 +140,10 @@ impl CardShown {
 }
 
 impl CardShown {
-    /// Its title, cut to fit its `card-title`.
-    fn title_link(&self) -> ItemTitle<'_> {
-        ItemTitle {
-            number: self.number,
-            title: &self.title,
-            cut: Cut::ToFit,
-        }
-    }
-
-    /// Its number, after its title.
-    fn number_link(&self) -> ItemNumberLink<'_> {
-        ItemNumberLink::after(&self.title_link(), &self.repo)
+    /// Its title, cut to fit its `card-title`, then its number in
+    /// `font-normal`.
+    fn name(&self) -> OneLineItem<'_> {
+        OneLineItem::of(self.number, &self.title, &self.repo, Weight::Normal)
     }
 }
 

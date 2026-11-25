@@ -17,7 +17,7 @@ use super::cards::{self, line_html};
 use super::facts::{Fact, Piece, RelatedItem};
 use super::html::{self, Html};
 use super::icons::CardIcon;
-use super::item_parts::{Cut, ItemNumberLink, ItemTitle};
+use super::item_parts::{Cut, ItemNumberLink, ItemTitle, Weight};
 use super::names::Naming;
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
@@ -37,9 +37,10 @@ impl ItemShown {
 }
 
 /// #N's title, then its number, in its heading's `card-title`
-/// (`docs/specs/board.md`, Item, Heading).
+/// (`docs/specs/board.md`, Item, Heading): the two sit in the
+/// `card-title` itself, at its gap, the number in `font-normal`.
 #[derive(Template)]
-#[template(source = "<span>{{ title }} {{ number }}</span>", ext = "html")]
+#[template(source = "{{ title }} {{ number }}", ext = "html")]
 struct HeadingName<'a> {
     title: ItemTitle<'a>,
     number: ItemNumberLink<'a>,
@@ -57,7 +58,7 @@ fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
                 title: &facts.title,
                 cut: Cut::Wrap,
             };
-            let number = ItemNumberLink::after(&title, repo);
+            let number = ItemNumberLink::after(&title, repo, Weight::Normal);
             html::rendered(&HeadingName { title, number })
         },
         icon: Some(CardIcon::Item(ItemKind::of(facts.pull_request))),
@@ -74,10 +75,12 @@ fn shown_facts(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Fact> {
     let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, naming));
     let fact = |label, lines: Vec<Vec<Piece>>| (!lines.is_empty()).then_some(Fact { label, lines });
     let items = |items: &[RelatedScreen]| {
-        items
-            .iter()
-            .map(|item| vec![Piece::Items(vec![related(item, repo)])])
-            .collect()
+        if items.is_empty() {
+            return vec![];
+        }
+        vec![vec![Piece::Items(
+            items.iter().map(|item| related(item, repo)).collect(),
+        )]]
     };
     let tickets = facts.tickets.map(|tickets| {
         let closed = format!("{} of {} closed", tickets.tickets_closed, tickets.tickets);
@@ -161,9 +164,10 @@ fn state(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Piece> {
     pieces
 }
 
-/// An item a fact lists, as its card is: its title and number, or its
-/// number alone where its title is not known; or a tracking issue as its
-/// lane's head is, with no card status.
+/// An item a fact lists: its icon, its card status, if its card shows
+/// one, its title and its number, with a tracking issue's the rest of its
+/// lane's head after them; or its number alone where its title is not
+/// known.
 fn related(item: &RelatedScreen, repo: &str) -> RelatedItem {
     match item {
         RelatedScreen::Card {
@@ -184,8 +188,6 @@ fn related(item: &RelatedScreen, repo: &str) -> RelatedItem {
                     rest: None,
                 },
                 None => RelatedItem::Unread {
-                    kind,
-                    status,
                     number: *number,
                     repo: repo.to_owned(),
                 },
@@ -197,7 +199,7 @@ fn related(item: &RelatedScreen, repo: &str) -> RelatedItem {
             number: lane.number,
             title: lane.title.clone(),
             repo: repo.to_owned(),
-            rest: Some(cards::lane_rest(lane).unwrap_or_default()),
+            rest: cards::lane_rest(lane),
         },
     }
 }

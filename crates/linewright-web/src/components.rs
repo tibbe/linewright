@@ -87,6 +87,31 @@ impl<'a> StatusBadge<'a> {
     }
 }
 
+/// A status in a transcript's entry (`docs/specs/components.md`,
+/// Transcript, A status in an entry): the status's icon, `size-[1em]`, in
+/// its colour, then `word`, `gap-1` apart, on the line's baseline.
+#[derive(Template)]
+#[template(
+    source = r#"<span class="inline-flex items-baseline gap-1">{{ self.icon() }}<span>{{ word }}</span></span>"#,
+    ext = "html"
+)]
+pub(super) struct EntryStatus<'a> {
+    pub(super) status: Status,
+    pub(super) word: &'a str,
+}
+
+impl askama::filters::HtmlSafe for EntryStatus<'_> {}
+
+impl EntryStatus<'_> {
+    /// Its status's icon, in its colour, centred on its word's line.
+    fn icon(&self) -> Html {
+        super::icons::status_icon(&self.status).svg_classed(
+            &super::icons::IconSize::Badge,
+            &format!("self-center {}", self.status.text()),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::html;
@@ -115,6 +140,26 @@ mod tests {
         assert!(
             paused.ends_with("<span>&#60;queued&#62;</span></span>"),
             "{paused}"
+        );
+    }
+
+    /// `docs/specs/components.md`, Transcript, A status in an entry.
+    #[test_log::test]
+    fn a_status_in_an_entry_is_its_icon_in_its_colour_then_its_word_gap_1_apart() {
+        let running = html::rendered(&EntryStatus {
+            status: Status::InFlight,
+            word: "running",
+        })
+        .to_string();
+        assert!(
+            running.starts_with(
+                r#"<span class="inline-flex items-baseline gap-1"><svg class="icon size-[1em] shrink-0 self-center text-info" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" data-icon="arrow-path">"#
+            ),
+            "{running}"
+        );
+        assert!(
+            running.ends_with("</svg><span>running</span></span>"),
+            "{running}"
         );
     }
 }

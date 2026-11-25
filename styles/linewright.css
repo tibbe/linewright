@@ -137,18 +137,6 @@
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }
 
-  :is(.board .toned .line, .related-item, .status-text) > svg.icon {
-    @apply mr-1;
-  }
-
-  .status-text > .status {
-    @apply mr-1;
-  }
-
-  .related-item:not(:last-child) {
-    @apply mr-4;
-  }
-
   /* A line that opens draws its chevron in place of the browser's own
      marker (https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/summary#changing_the_summarys_icon). */
   summary.line {
