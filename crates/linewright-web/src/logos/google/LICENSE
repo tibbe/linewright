@@ -1,12 +1,8 @@
-g-logo.svg is Google's "G" logo, as Google's own "Sign in with Google"
-button draws it, used unchanged as Google's branding guidelines
+Google's "G" is docs/specs/assets/google-g.svg, which logos.rs takes from the
+spec as it is, for People and for Sign in. It is Google's "G" as Google's own
+"Sign in with Google" button draws it, from the credential_button_library
+script that https://accounts.google.com/gsi/client loads, with only the SVG's
+class left out. It is drawn unchanged, as Google's branding guidelines
 (https://developers.google.com/identity/branding-guidelines) allow, to stand
 for signing in with Google. Google and the Google logo are trademarks of
 Google LLC.
-
-Sign in's "G" is docs/specs/assets/google-g.svg, which logos.rs takes from the
-spec as it is. It is Google's "G" as Google's own "Sign in with Google" button
-draws it, from the credential_button_library script that
-https://accounts.google.com/gsi/client loads, with only the SVG's class left
-out. The "G" is drawn unchanged, as Google's sign-in branding guidelines
-(https://developers.google.com/identity/branding-guidelines) ask.
