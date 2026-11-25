@@ -538,9 +538,13 @@ is not in BENCHMARK does not exist.
   | Fact          | Holds                                                                 |
   | ------------- | --------------------------------------------------------------------- |
   | Captured from | the run it was captured from, linking to its Run                      |
-  | Item          | its item's [item name](components.md#item-name), with the title it had at the start |
+  | Item          | its item's title as it was at the start, then its number |
   | Started       | when Linewright decided to start the run ([Tasks](#tasks))            |
 
+- **The task's item** is its title, then its number, `gap-1` apart. The title
+  is a daisyUI `link`, `link-hover`, to the item's [Item](board.md#item). The
+  number is in secondary text ([Type](ui_patterns.md#type)), and is a daisyUI
+  `link`, `link-hover`, to the item on GitHub.
 - **Criteria.** A [card with icon](components.md#card-with-icon) titled
   "Criteria", with the icon `clipboard-document-check`, that holds the whole of
   the task's criteria.

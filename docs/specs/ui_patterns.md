@@ -135,8 +135,9 @@
   which status each of its states shows as.
 - **Shown.** A status shows as its icon and its colour. Where a screen also
   names a status's state, the status's badge in the table below, in `badge-sm`,
-  holds the icon, then the state's name. A status among a screen's facts is the
-  exception ([Facts](components.md#facts)). For example, a running benchmark run
+  holds the icon, then the state's name. A status among a screen's facts, and
+  one in a transcript's entry, are the exceptions ([Facts](components.md#facts),
+  [Transcript](components.md#transcript)). For example, a running benchmark run
   shows as "running", with the icon of in flight, in its colour.
 - **A badge's words.** The state's name in a badge gives no reason or
   detail: "no score", not why there is none.
@@ -288,7 +289,7 @@
 ## Type
 
 - **Secondary text** is text that qualifies the text it sits beside, such as a
-  card's line under its name, a fact's label or a transcript entry's time or
+  card's line under its title, a fact's label or a transcript entry's time or
   duration. It is quieter than the text beside it
   ([Type](design_system.md#type)).
 

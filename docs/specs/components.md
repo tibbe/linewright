@@ -13,18 +13,8 @@ component for ([Design system](design_system.md)).
 
 ## Card with icon
 
-- **A card with icon** is a card ([Cards](ui_patterns.md#cards)) with a
-  `size-5` icon before its `card-title`.
-
-## Item name
-
-- **An item name** is the item's title, then its number, such as "Name the
-  board's columns #3". Its text is the size of the text around it.
-- **The title** is a daisyUI `link`, `link-hover`, to the item's
-  [Item](board.md#item).
-- **The number** is in secondary text ([Type](ui_patterns.md#type)) and
-  `font-normal`, whatever the weight of the text around it. It is a daisyUI
-  `link`, `link-hover`, to the item on GitHub.
+- **A card with icon** is a card ([Cards](ui_patterns.md#cards)) whose
+  `card-title` holds a `size-5` icon, then the title.
 
 ## Paused badge
 
@@ -39,8 +29,8 @@ component for ([Design system](design_system.md)).
   (`flex justify-between`).
 - **A label** is words alone, with no icon or colour.
 - **A status among facts** is in the value: a daisyUI `status` dot in its
-  colour, then its icon, `size-[1em]`, and the value's words. A paused dot is in
-  `bg-base-content/60`.
+  colour, then its icon, `size-[1em]`, then the value's words, `gap-1` apart. A
+  paused dot is in `bg-base-content/60`.
 
 ## Transcript
 
@@ -53,6 +43,9 @@ component for ([Design system](design_system.md)).
   is closed and down (`chevron-down`) while it is open. A chevron is `size-4`.
   In other entries the column is empty. A session's settings and brief files
   open with the same chevron.
+- **A status in an entry.** `running` and `interrupted`, which an entry shows
+  as a status ([Transcripts](runs.md#transcripts)), are the status's icon,
+  `size-[1em]`, in its colour, then the word, `gap-1` apart.
 - **Indents.** The text of an entry starts at the same place on each of its
   lines. What the entry opens to starts there too.
 - **Durations.** An entry's duration is at the right edge of its line. A
