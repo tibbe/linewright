@@ -27,7 +27,7 @@ contracts![
     the_diff_of_a_pull_request_holds_its_changes_to_the_paths_asked,
     the_diff_of_a_merged_pull_request_holds_its_changes_to_the_paths_asked,
     a_pull_request_the_default_branch_moved_past_without_a_conflict_reads_clean,
-    a_merge_moves_when_the_pull_request_and_the_issue_it_closed_were_last_updated_alike,
+    a_merge_moves_when_the_pull_request_and_then_the_issue_it_closed_were_last_updated,
 ];
 
 /// Who GitHub commits a merge commit or a squash as.
@@ -829,7 +829,13 @@ async fn a_pull_request_the_default_branch_moved_past_without_a_conflict_reads_c
         .await
 }
 
-async fn a_merge_moves_when_the_pull_request_and_the_issue_it_closed_were_last_updated_alike(
+/// GitHub closes the issues a pull request closes once it merged
+/// (<https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>),
+/// in a step of its own, so at the merge or later. The pull request's own
+/// last update moves again after the merge, such as when GitHub deletes its
+/// head branch
+/// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-the-automatic-deletion-of-branches>).
+async fn a_merge_moves_when_the_pull_request_and_then_the_issue_it_closed_were_last_updated(
     sandbox: Sandbox,
 ) -> Result<()> {
     let (issue, Opened { branch, pr }) =
@@ -873,11 +879,12 @@ async fn a_merge_moves_when_the_pull_request_and_the_issue_it_closed_were_last_u
                 issue_at > issue_before,
                 "the merge left {issue} at {issue_at}, not after {issue_before}"
             );
-            equal(
-                "when the issue it closed was last updated",
-                &issue_at,
-                &merged.updated_at,
-            )
+            ensure!(
+                issue_at >= merged.merged_at,
+                "{issue} was last updated at {issue_at}, before {pr} merged at {}",
+                merged.merged_at
+            );
+            Ok(())
         })
         .await
 }
