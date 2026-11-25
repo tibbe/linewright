@@ -258,8 +258,9 @@ tracking issue: a person who opened it, is assigned to it or reviews it.
   ([Facts](components.md#facts)) in the order below, then its runs.
 - **Heading.** A [card with icon](components.md#card-with-icon), whose icon is
   Octicons' `issue-opened` for an issue or `git-pull-request` for a pull
-  request. Its `card-title` holds, after the icon, #N's title, then its number.
-  Under the `card-title` is when `serve` last read #N, such as "as of 2
+  request. Its `card-title` holds, after the icon, #N's title, then a space,
+  then its number. The title and the number wrap between words, as one
+  text. Under the `card-title` is when `serve` last read #N, such as "as of 2
   minutes ago".
 - **The heading's title** is a daisyUI `link`, `link-hover`, to this screen.
 - **The heading's number** is in secondary text ([Type](ui_patterns.md#type))
@@ -290,12 +291,12 @@ tracking issue: a person who opened it, is assigned to it or reviews it.
 - **A related item that Linewright has not read** is its number alone, in
   secondary text, a daisyUI `link`, `link-hover`, to the item on GitHub.
 - **Items in Waiting for and in what keeps #N out.** An item named in Waiting
-  for, or in what keeps #N out under State, is its title, then its number,
-  `gap-1` apart. The title is a daisyUI `link`, `link-hover`, to the item's
-  Item. The number is in secondary text, and is a daisyUI `link`,
-  `link-hover`, to the item on GitHub. An item that Linewright has not read
-  is its number alone, in secondary text, a daisyUI `link`, `link-hover`, to
-  the item on GitHub.
+  for, or in what keeps #N out under State, is its title, then a space, then
+  its number. The item and the rest of its sentence wrap between words, as
+  one text. The title is a daisyUI `link`, `link-hover`, to the item's Item. The
+  number is in secondary text, and is a daisyUI `link`, `link-hover`, to the
+  item on GitHub. An item that Linewright has not read is its number alone, in
+  secondary text, a daisyUI `link`, `link-hover`, to the item on GitHub.
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
