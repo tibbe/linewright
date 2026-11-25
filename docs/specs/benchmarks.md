@@ -438,6 +438,10 @@ is not in BENCHMARK does not exist.
 | `lw benchmark-run rename-configuration ID CONFIGURATION NAME`                  | change the name of a configuration of a benchmark run, where CONFIGURATION is the configuration's ID |
 | `lw benchmark-run cancel ID`                                                   | cancel a benchmark run                                            |
 
+- **Without `serve`.** While `serve` is not running, `benchmark-run show`
+  shows a running or waiting benchmark run as waiting, with `serve` as what it
+  waits for.
+
 ## Screens
 
 | Screen            | Reached from                                                    | Purpose                                                                                    |

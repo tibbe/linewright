@@ -148,7 +148,10 @@ counts against the ceiling on simultaneous runs.
 - **A second request.** While a request by hand for an automation waits for
   its run to start, another request for that automation starts no other run.
 - **A request that `serve` refuses.** `serve` refuses a request during a
-  drain, and a request whose NAME names no automation. The command says why.
+  drain, and a request whose NAME names no automation. It also refuses a
+  request until its first poll has listed the automations, and while its
+  latest poll could not list them, such as after an error from GitHub. The
+  command says why.
 - **A request after a restart.** A restart forgets a request whose run has
   not started.
 - **The last run.** An automation's last run is its newest, whether by its
