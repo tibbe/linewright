@@ -3035,10 +3035,11 @@ impl Store for LocalStore {
     }
 
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()> {
-        let now = self.now();
         let mut state = self.state();
         let thread = state
-            .pull_written(pr, now)?
+            .item_mut(pr)?
+            .pull()
+            .with_context(|| format!("no pull request {pr}"))?
             .threads
             .iter_mut()
             .find(|t| t.id == thread)
