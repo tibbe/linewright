@@ -381,11 +381,19 @@ For each authorization request:
 
   | Column    | Holds                                                                                 |
   | --------- | ------------------------------------------------------------------------------------- |
-  | Person    | their avatar, then their name, then their identity provider's logo and their identity |
+  | Person    | their avatar, their name and their identity |
   | Role      | their role                                                                            |
   | State     | "enabled" or "disabled"                                                               |
   | Signed in | when they last signed in                                                              |
 
+- **The Person column** holds the person's avatar, then, `gap-3` after it,
+  their name over a second line. The second line holds their identity
+  provider's logo, then their identity, `gap-1` apart. It is in `text-sm`, in
+  secondary text ([Type](ui_patterns.md#type)).
+- **The logo** is `size-[1em]`: Google's "G",
+  [`google-g.svg`](assets/google-g.svg), for Google, and Octicons'
+  [`mark-github`](https://primer.style/octicons/icon/mark-github-16) for
+  GitHub.
 - **A row's buttons.** "Edit" ([Editing](ui_patterns.md#editing)), then
   "Disable" on an enabled person and "Enable" on a disabled one. "Disable"
   has the icon `lock-closed`, and "Enable" the icon `lock-open`.
