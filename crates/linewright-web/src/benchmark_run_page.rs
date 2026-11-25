@@ -413,11 +413,11 @@ impl ConfigurationsColumn {
             ConfigurationsColumn::MeanCost
             | ConfigurationsColumn::TotalCost
             | ConfigurationsColumn::MeanTime
-            | ConfigurationsColumn::TotalTime => Align::End,
+            | ConfigurationsColumn::TotalTime
+            | ConfigurationsColumn::Leaks
+            | ConfigurationsColumn::Unscored => Align::End,
             ConfigurationsColumn::Name
             | ConfigurationsColumn::PassRate
-            | ConfigurationsColumn::Leaks
-            | ConfigurationsColumn::Unscored
             | ConfigurationsColumn::Edit => Align::Start,
         }
     }
