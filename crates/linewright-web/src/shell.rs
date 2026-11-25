@@ -15,6 +15,7 @@ use serde::Deserialize;
 
 use linewright_core::access::{self, Permit};
 
+use super::components::{CardTitle, HeadingLevel};
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon};
 use super::names::Naming;
@@ -265,6 +266,15 @@ pub(super) struct Heading {
 }
 
 impl Heading {
+    /// Its name as its card's title, at `level`.
+    pub(super) fn card_title(&self, level: HeadingLevel) -> CardTitle {
+        CardTitle {
+            level,
+            icon: self.icon,
+            name: self.name.clone(),
+        }
+    }
+
     /// The heading named `title`, with no icon, no state and no line.
     pub(super) fn named(title: impl Into<String>) -> Heading {
         let title = title.into();

@@ -29,6 +29,7 @@ use linewright_core::phrase::Status;
 
 use super::buttons::{ScreenButton, Verb};
 use super::caller::{Asking, Reader};
+use super::components::{CardTitle, HeadingLevel};
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
@@ -849,6 +850,16 @@ struct BenchmarkRunPage {
     edit_values: Html,
 }
 
+/// The chart's card's title, the label of the choice of its horizontal axis
+/// (`docs/specs/benchmarks.md`, Benchmark run, The chart's look).
+pub(super) fn chart_title() -> CardTitle {
+    CardTitle {
+        level: HeadingLevel::H2,
+        icon: Some(CardIcon::Chart),
+        name: html::built(r#"<label for="chart-axis">Pass rate vs</label>"#.to_string()),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "benchmark_run_facts.html")]
 struct FactsRegion<'a> {
@@ -1333,7 +1344,6 @@ async fn trial_transcript(
         |(shown, _)| shown.name.capitalized(),
     );
     let heading = Heading {
-        icon: Some(CardIcon::Beaker),
         line: found.as_ref().ok().map(|(shown, _)| context(shown)),
         ..Heading::named(format!("{named}'s {}", path.of))
     };

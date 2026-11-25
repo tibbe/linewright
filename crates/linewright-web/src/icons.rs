@@ -270,12 +270,12 @@ pub(super) fn named_status_icon(status: &Status) -> Html {
     status_icon(status).named(IconSize::Inline, name)
 }
 
-/// The icon before a card's title, which stands for what the card holds
-/// (`docs/specs/ui_patterns.md`, Cards and Icons).
+/// The icon of a card with icon, which its screen gives it
+/// (`docs/specs/components.md`, Card with icon).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CardIcon {
-    /// What the board holds: an item.
-    ViewColumns,
+    /// An item, by its kind.
+    Item(ItemKind),
     /// A run, or runs.
     CommandLine,
     /// A benchmark, or what it holds.
@@ -295,7 +295,7 @@ pub(super) enum CardIcon {
 impl CardIcon {
     pub(super) fn icon(self) -> Icon {
         match self {
-            CardIcon::ViewColumns => Icon::ViewColumns,
+            CardIcon::Item(kind) => item_kind_icon(kind),
             CardIcon::CommandLine => Icon::CommandLine,
             CardIcon::Beaker => Icon::Beaker,
             CardIcon::Configurations => Icon::AdjustmentsHorizontal,
@@ -303,6 +303,21 @@ impl CardIcon {
             CardIcon::Chart => Icon::ChartBar,
             CardIcon::Criteria => Icon::ClipboardDocumentCheck,
             CardIcon::Authorizations => Icon::Key,
+        }
+    }
+
+    /// The icon before a card's title, `size-5`. A screen reader reads an
+    /// item's kind, and skips any other.
+    pub(super) fn svg(self) -> Html {
+        match self {
+            CardIcon::Item(kind) => self.icon().named(IconSize::CardTitle, kind_name(kind)),
+            CardIcon::CommandLine
+            | CardIcon::Beaker
+            | CardIcon::Configurations
+            | CardIcon::Grid
+            | CardIcon::Chart
+            | CardIcon::Criteria
+            | CardIcon::Authorizations => self.icon().svg(IconSize::CardTitle),
         }
     }
 }
@@ -323,11 +338,15 @@ fn item_kind_icon(kind: ItemKind) -> Icon {
     reason = "askama passes a template's values by reference, at any depth"
 )]
 pub(super) fn item_kind_svg(kind: &ItemKind) -> Html {
-    let name = match kind {
+    item_kind_icon(*kind).named(IconSize::Inline, kind_name(*kind))
+}
+
+/// What a screen reader reads of the icon of an item of `kind`.
+fn kind_name(kind: ItemKind) -> &'static str {
+    match kind {
         ItemKind::Issue => "issue",
         ItemKind::PullRequest => "pull request",
-    };
-    item_kind_icon(*kind).named(IconSize::Inline, name)
+    }
 }
 
 #[cfg(test)]

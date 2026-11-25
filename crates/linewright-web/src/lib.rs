@@ -14,6 +14,7 @@ mod caller;
 mod capture;
 mod card_page;
 mod cards;
+mod components;
 mod confirmation;
 mod editing;
 mod facts;

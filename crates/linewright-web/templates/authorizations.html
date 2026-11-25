@@ -4,7 +4,7 @@
 <div id="{{ SAID }}" class="max-w-xl shrink-0 empty:hidden" role="status"></div>
 {% block authorizations -%}
 <section id="authorizations" class="flex min-h-0 flex-1 flex-col">
-{%- call(part) ui::table_card("Authorizations", Some(crate::icons::CardIcon::Authorizations), shows_name = true, heading = "h1") %}
+{%- call(part) ui::table_card("Authorizations", Some(crate::icons::CardIcon::Authorizations), shows_name = true, heading = crate::components::HeadingLevel::H1) %}
 {%- if part == crate::table::Part::Table %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
