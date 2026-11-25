@@ -139,6 +139,27 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
     store.unassign_as(MAINTAINER, taken_back, LINEWRIGHT)?;
     store.unlabel_as(taken_back, label::READY_FOR_AGENT)?;
     store.label_as(MAINTAINER, taken_back, label::READY_FOR_HUMAN)?;
+    let in_review = store.open_issue(
+        MAINTAINER,
+        "Let a person narrow the board to the items they opened, are assigned to or review, and keep it across reloads",
+        "The board should show me my own items.",
+        &[],
+    );
+    store.assign_as(MAINTAINER, in_review, LINEWRIGHT)?;
+    store
+        .commit(
+            LINEWRIGHT,
+            "narrow-the-board",
+            &[("src/board.rs", "// narrowed\n")],
+            "Narrow the board to a person",
+        )
+        .await?;
+    let pull = store.open_linewrights_pull(
+        "narrow-the-board",
+        "Narrow the board to a person",
+        &format!("Closes {in_review}"),
+    );
+    store.assign_as(LINEWRIGHT, pull, LINEWRIGHT)?;
     Ok(())
 }
 
