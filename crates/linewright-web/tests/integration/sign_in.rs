@@ -384,8 +384,6 @@ async fn a_screen_opened_without_a_sign_in_goes_to_sign_in_and_back_to_it_after(
         "owner/widgets"
     );
     assert_eq!(message(&sign_in.html), None);
-    let google = select(&sign_in.html, ".sign-in form button img")[0];
-    assert_eq!(google.attr("alt"), Some("Sign in with Google"));
     let back = browser
         .sign_in("/runs?state=failed", Some("nameless@example.com"))
         .await;
@@ -423,10 +421,10 @@ async fn a_screen_opened_without_a_sign_in_goes_to_sign_in_and_back_to_it_after(
     );
 }
 
-/// `docs/specs/access.md`, Sign in, Identity providers;
-/// `docs/specs/access.md`, Sign in, GitHub's button.
+/// `docs/specs/access.md`, Sign in, Identity providers, Google's button and
+/// GitHub's button.
 #[test_log::test(tokio::test)]
-async fn sign_in_offers_google_then_github_with_githubs_mark_in_each_theme() {
+async fn sign_in_offers_google_then_github_as_daisyuis_login_buttons() {
     let both = signing(None).await;
     let github_alone = signing_offering(Offering::GitHubAlone, None).await;
 
@@ -438,14 +436,61 @@ async fn sign_in_offers_google_then_github_with_githubs_mark_in_each_theme() {
     };
     let sign_in = Browsing::new(&both).get("/sign-in").await;
     assert_eq!(offered(&sign_in.html), ["/auth/google", "/auth/github"]);
-    let button = select(&sign_in.html, "form[action='/auth/github'] button")[0];
-    assert!(has_classes(button, &["btn"]), "{}", button.html());
-    assert!(!has_classes(button, &["btn-sm"]), "{}", button.html());
-    assert_eq!(text(button), "Sign in with GitHub");
-    let mark = select_in(button, "svg:first-child")[0];
-    assert_eq!(mark.attr("data-logo"), Some("github"));
+    let google = select(&sign_in.html, "form[action='/auth/google'] button")[0];
     assert!(
-        has_classes(mark, &["text-black", "dark:text-white"]),
+        has_classes(
+            google,
+            &[
+                "btn",
+                "btn-md",
+                "bg-white",
+                "text-black",
+                "border-[#e5e5e5]"
+            ]
+        ),
+        "{}",
+        google.html()
+    );
+    assert_eq!(text(google), "Sign in with Google");
+    let g = select_in(google, "img:first-child")[0];
+    assert_eq!(g.attr("data-logo"), Some("google"));
+    assert!(has_classes(g, &["size-4", "shrink-0"]), "{}", g.html());
+    assert_eq!(g.attr("alt"), Some(""));
+    assert_eq!(
+        (g.attr("width"), g.attr("height")),
+        (Some("16"), Some("16"))
+    );
+    let src = g.attr("src").unwrap_or_default();
+    let svg = src
+        .strip_prefix("data:image/svg+xml,")
+        .unwrap_or_else(|| panic!("{src}"));
+    let spec_g = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/specs/assets/google-g.svg"
+    ))
+    .unwrap();
+    assert_eq!(
+        percent_encoding::percent_decode_str(svg)
+            .decode_utf8()
+            .unwrap(),
+        spec_g.trim()
+    );
+    let github = select(&sign_in.html, "form[action='/auth/github'] button")[0];
+    assert!(
+        has_classes(
+            github,
+            &["btn", "btn-md", "bg-black", "text-white", "border-black"]
+        ),
+        "{}",
+        github.html()
+    );
+    assert_eq!(text(github), "Sign in with GitHub");
+    let mark = select_in(github, "svg:first-child")[0];
+    assert_eq!(mark.attr("data-logo"), Some("github"));
+    assert_eq!(mark.attr("fill"), Some("white"));
+    assert_eq!(mark.attr("aria-hidden"), Some("true"));
+    assert!(
+        has_classes(mark, &["size-4", "shrink-0"]),
         "{}",
         mark.html()
     );

@@ -97,7 +97,7 @@ pub(super) enum IconSize {
 }
 
 impl IconSize {
-    fn class(self) -> &'static str {
+    pub(super) fn class(self) -> &'static str {
         match self {
             IconSize::CardTitle => "size-5",
             IconSize::Badge => "size-[1em]",
@@ -143,7 +143,14 @@ impl Icon {
     }
 
     fn drawn(self, size: IconSize, class: Option<&str>, read: Read) -> Html {
-        drawn_svg(self.source(), size, class, read, Marker::Icon(self.name()))
+        drawn_svg(
+            self.source(),
+            size,
+            class,
+            Fill::CurrentColor,
+            read,
+            Marker::Icon(self.name()),
+        )
     }
 }
 
@@ -156,9 +163,27 @@ pub(super) enum Marker<'a> {
     Logo(&'a str),
 }
 
-/// The vendored SVG file `source` in `size`, in the colour of the text
-/// around it, of class `icon` and the classes `class` too, read as `read`
-/// says and marked as `marker` says.
+/// What an icon or a logo is filled with.
+#[derive(Clone, Copy)]
+pub(super) enum Fill {
+    /// The colour of the text around it.
+    CurrentColor,
+    /// White, whatever the text around it.
+    White,
+}
+
+impl Fill {
+    fn value(self) -> &'static str {
+        match self {
+            Fill::CurrentColor => "currentColor",
+            Fill::White => "white",
+        }
+    }
+}
+
+/// The vendored SVG file `source` in `size`, filled with `fill`, with the
+/// classes `class` too, read as `read` says and marked as `marker` says. An
+/// icon of the set is of class `icon` too, and a logo isn't.
 ///
 /// # Panics
 ///
@@ -167,6 +192,7 @@ pub(super) fn drawn_svg(
     source: &'static str,
     size: IconSize,
     class: Option<&str>,
+    fill: Fill,
     read: Read,
     marker: Marker,
 ) -> Html {
@@ -176,13 +202,14 @@ pub(super) fn drawn_svg(
         Read::Hidden => r#" aria-hidden="true""#.to_string(),
         Read::Named(name) => format!(r#" role="img" aria-label="{}""#, html::escape(name)),
     };
-    let marker = match marker {
-        Marker::Icon(name) => format!(r#"data-icon="{name}""#),
-        Marker::Logo(name) => format!(r#"data-logo="{name}""#),
+    let (icon, marker) = match marker {
+        Marker::Icon(name) => ("icon ", format!(r#"data-icon="{name}""#)),
+        Marker::Logo(name) => ("", format!(r#"data-logo="{name}""#)),
     };
     html::built(format!(
-        r#"<svg class="icon {size} shrink-0{class}" viewBox="{view_box}" fill="currentColor"{read} {marker}>{paths}</svg>"#,
+        r#"<svg class="{icon}{size} shrink-0{class}" viewBox="{view_box}" fill="{fill}"{read} {marker}>{paths}</svg>"#,
         size = size.class(),
+        fill = fill.value(),
     ))
 }
 
