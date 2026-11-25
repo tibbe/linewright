@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
 <section id="criteria" class="{% call ui::card_look() %}{% endcall %} max-w-3xl">
 <div class="card-body">
-<h2 class="card-title">{% call ui::icon(crate::icons::CardIcon::Criteria.icon(), crate::icons::IconSize::CardTitle) %}{% endcall %}Criteria</h2>
+{{ crate::components::CardTitle::text(crate::components::HeadingLevel::H2, Some(crate::icons::CardIcon::Criteria), "Criteria") }}
 {%- match task.criteria %}
 {%- when CriteriaShown::Read(text) %}
 <pre class="font-sans whitespace-pre-wrap">{{ text }}</pre>

@@ -35,30 +35,14 @@ impl ItemShown {
     }
 }
 
-/// #N's name in its heading: its number and title as on its card, with the
-/// icon of an issue or a pull request beside it, but for a tracking issue,
-/// whose card is its lane head (`docs/specs/board.md`, Item, Heading and Its
-/// card; Cards, Issue or pull request).
-#[derive(Template)]
-#[template(
-    source = r#"{% if let Some(kind) = kind %}{{ crate::icons::item_kind_svg(kind) }}{% endif %}{{ titled|safe }}"#,
-    ext = "html"
-)]
-struct ItemName {
-    kind: Option<ItemKind>,
-    titled: Html,
-}
-
-/// #N's heading: its name, and under it when `serve` last read it.
+/// #N's heading: a card with the icon of an issue or a pull request, its
+/// name, and under it when `serve` last read it (`docs/specs/board.md`, Item,
+/// Heading).
 fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
     Heading {
         title: format!("{} {}", facts.number, facts.title),
-        name: html::rendered(&ItemName {
-            kind: (!matches!(facts.standing, Standing::Tracking { .. }))
-                .then(|| ItemKind::of(facts.pull_request)),
-            titled: html::titled(facts.number, &facts.title, repo),
-        }),
-        icon: Some(CardIcon::ViewColumns),
+        name: html::titled(facts.number, &facts.title, repo),
+        icon: Some(CardIcon::Item(ItemKind::of(facts.pull_request))),
         state: None,
         line: Some(html::escape("as of ").then(&html::time(facts.last_read))),
     }
@@ -246,10 +230,7 @@ fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigat
     let page = ErrorPage {
         page: page(
             number,
-            Thing::Found(Heading {
-                icon: Some(CardIcon::ViewColumns),
-                ..Heading::named(number.to_string())
-            }),
+            Thing::Found(Heading::named(number.to_string())),
             navigation,
         ),
         frame,

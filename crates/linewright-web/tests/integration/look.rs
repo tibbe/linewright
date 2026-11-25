@@ -171,17 +171,24 @@ async fn item_and_servers_facts_are_rows_each_its_label_at_the_start_and_its_val
     }
 }
 
-/// `docs/specs/ui_patterns.md`, Cards: a card's title has an icon
-/// before it.
+/// `docs/specs/components.md`, Card with icon: a card with icon has its
+/// icon, `size-5`, first in its `card-title`, and no other icon there. A
+/// screen reader skips it, but for an item's kind, which it reads
+/// (`docs/specs/board.md`, Item, Heading).
 #[test_log::test(tokio::test)]
-async fn every_cards_title_has_an_icon_before_it() {
+async fn a_card_with_icon_has_its_icon_first_in_its_title() {
     let pages = with_a_run().await;
 
-    let mut titles = 0;
-    for path in PATHS {
+    let mut icons = 0;
+    for path in screens_with_cards() {
         let html = pages.page(path).await;
         for title in select(&html, ".card-title") {
-            titles += 1;
+            let drawn = select_in(title, ":scope > svg");
+            if drawn.is_empty() {
+                continue;
+            }
+            icons += 1;
+            assert_eq!(drawn.len(), 1, "{path}: {}", title.html());
             let first = title
                 .children()
                 .find(|child| {
@@ -191,15 +198,29 @@ async fn every_cards_title_has_an_icon_before_it() {
                         .is_none_or(|text| !text.trim().is_empty())
                 })
                 .and_then(ElementRef::wrap);
+            assert_eq!(first, Some(drawn[0]), "{path}: {}", title.html());
             assert!(
-                first.is_some_and(|first| first.value().name() == "svg"
-                    && first.attr("aria-hidden") == Some("true")),
+                has_classes(drawn[0], &["size-5"]),
                 "{path}: {}",
                 title.html()
             );
+            let read = match icon_name(drawn[0]).as_str() {
+                "issue-opened" | "git-pull-request" => drawn[0].attr("role") == Some("img"),
+                _ => drawn[0].attr("aria-hidden") == Some("true"),
+            };
+            assert!(read, "{path}: {}", title.html());
         }
     }
-    assert!(titles > 0, "the pages have cards with titles");
+    assert!(icons > 0, "the pages have cards with icons");
+}
+
+/// A trial's page in `with_a_run`.
+const TRIAL: &str = "/benchmark-runs/1/1/1/1/run";
+
+/// The pages in `with_a_run` whose cards are drawn as the screens give them:
+/// all but the board, whose cards are its own (`docs/specs/board.md`, Cards).
+fn screens_with_cards() -> impl Iterator<Item = &'static str> {
+    PATHS.into_iter().filter(|path| *path != "/").chain([TRIAL])
 }
 
 /// The name of `icon`'s icon (`docs/specs/design_system.md`, Icons).
@@ -246,47 +267,49 @@ async fn every_icon_is_one_of_the_set_sized_by_where_it_sits() {
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Cards and Icons: a card's title has
-/// the icon of the area of what the card holds, but the cards the table
-/// names.
+/// `docs/specs/components.md`, Card with icon: the cards their screens give an
+/// icon have it, and every other card has none (`docs/specs/board.md`, Item;
+/// `docs/specs/runs.md`, Run; `docs/specs/benchmarks.md`, Benchmark, Task and
+/// Benchmark run).
 #[test_log::test(tokio::test)]
-async fn each_cards_title_has_the_icon_of_what_it_holds() {
+async fn only_the_cards_their_screens_give_an_icon_have_one() {
     let pages = with_a_run().await;
 
     let mut titles = Vec::new();
-    for path in ["/items/1", "/runs/1/triage-1", "/benchmark-runs/1"] {
+    for path in screens_with_cards() {
         let html = pages.page(path).await;
         for title in select(&html, ".card-title") {
-            let icon = select_in(title, ":scope > svg")[0];
-            titles.push((path, text(title), icon_name(icon)));
+            let icon = select_in(title, ":scope > svg")
+                .first()
+                .map(|icon| icon_name(*icon));
+            titles.push((path, text(title), icon));
         }
     }
 
+    let card =
+        |path, title: &str, icon: Option<&str>| (path, title.to_string(), icon.map(str::to_string));
     assert_eq!(
-        titles
-            .iter()
-            .map(|(path, title, icon)| (*path, title.clone(), icon.as_str()))
-            .collect::<Vec<_>>(),
+        titles,
         [
-            ("/items/1", "#1: Ship gh".to_string(), "view-columns"),
-            ("/items/1", "Runs".to_string(), "command-line"),
-            (
+            card("/items/1", "#1: Ship gh", Some("issue-opened")),
+            card("/items/1", "Runs", Some("command-line")),
+            card(
                 "/runs/1/triage-1",
-                "1/triage-1 (it started no session)".to_string(),
-                "command-line"
+                "1/triage-1 (it started no session)",
+                Some("command-line")
             ),
-            ("/benchmark-runs/1", "Benchmark run 1".to_string(), "beaker"),
-            ("/benchmark-runs/1", "Pass rate vs".to_string(), "chart-bar"),
-            (
+            card("/benchmarks/1", "board", Some("beaker")),
+            card("/tasks/1", "columns", Some("beaker")),
+            card("/tasks/1", "Criteria", Some("clipboard-document-check")),
+            card("/benchmark-runs/1", "Benchmark run 1", Some("beaker")),
+            card("/benchmark-runs/1", "Pass rate vs", Some("chart-bar")),
+            card(
                 "/benchmark-runs/1",
-                "Configurations".to_string(),
-                "adjustments-horizontal"
+                "Configurations",
+                Some("adjustments-horizontal")
             ),
-            (
-                "/benchmark-runs/1",
-                "Passes by task".to_string(),
-                "table-cells"
-            ),
+            card("/benchmark-runs/1", "Passes by task", Some("table-cells")),
+            card(TRIAL, "Trial 1 of columns under as-is's run", None),
         ]
     );
 }

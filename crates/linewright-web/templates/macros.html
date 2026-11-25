@@ -62,15 +62,15 @@
     `name` for screen readers alone. The filters are in a row of their own
     under the top, unless `filters_stream` is empty, applied as the page's
     filters are to its address and to its stream at `filters_stream`. Its
-    title is the element `heading`, such as `h1` on a screen with neither
-    breadcrumbs nor a heading card. Then comes the table. The caller draws each `crate::table::Part` it is
+    title is at the `crate::components::HeadingLevel` `heading`, such as `H1`
+    on a screen with neither breadcrumbs nor a heading card. Then comes the table. The caller draws each `crate::table::Part` it is
     given: the filters' fields, the buttons and the table. -#}
-{%- macro table_card(name, icon, shows_name, filters_stream = "", buttons = false, heading = "h2") -%}
+{%- macro table_card(name, icon, shows_name, filters_stream = "", buttons = false, heading = crate::components::HeadingLevel::H2) -%}
 <section class="table-card {% call card_look() %}{% endcall %} min-h-0 gap-4 overflow-hidden pt-4"{% if !shows_name %} aria-label="{{ name }}"{% endif %}>
 {%- if shows_name || buttons %}
 <div class="table-top flex shrink-0 flex-wrap items-center gap-2 px-4">
 {%- if shows_name %}
-<{{ heading }} class="card-title">{% if let Some(card_icon) = icon %}{% call icon(card_icon.icon(), crate::icons::IconSize::CardTitle) %}{% endcall %}{% endif %}{{ name }}</{{ heading }}>
+{{ crate::components::CardTitle::text(*heading, *icon, name) }}
 {%- endif %}
 {%- if buttons %}
 <div class="ml-auto flex flex-wrap items-center gap-2">

@@ -509,8 +509,7 @@ fn a_lane() -> linewright_core::status::View {
 
 /// `docs/specs/board.md`, Item: a tracking issue's State is
 /// "Tracking", with no status of its lane's own (Out of scope), and its
-/// heading is as its card, its lane head, is, with no icon (Heading, Its
-/// card).
+/// heading is a card with icon, the icon of an issue (Heading, Its card).
 #[test_log::test(tokio::test)]
 async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     let pages = Pages::of(a_lane()).await;
@@ -520,11 +519,13 @@ async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     assert_eq!(fact(&item_facts(&html), "State"), "Tracking");
     let value = select(&html, "#item dd")[0];
     assert!(select_in(value, "svg").is_empty(), "{}", value.html());
-    let heading = select(&html, "#heading h1")[0];
-    assert!(
-        select_in(heading, "svg[role=img]").is_empty(),
-        "a tracking issue's heading is as its lane head: {}",
-        heading.html()
+    let heading_icons: Vec<_> = select(&html, "#heading h1 svg[role=img]")
+        .into_iter()
+        .map(kind)
+        .collect();
+    assert_eq!(
+        heading_icons,
+        [("issue-opened".to_string(), "issue".to_string())]
     );
 }
 
@@ -593,9 +594,9 @@ fn kind(icon: ElementRef) -> (String, String) {
     (attribute("data-icon"), attribute("aria-label"))
 }
 
-/// `docs/specs/board.md`, Cards, Issue or pull request, and Item, Heading
-/// and Related items: beside its number, an item carries the icon of an
-/// issue or of a pull request, which a screen reader reads.
+/// `docs/specs/board.md`, Item, Heading and Related items: the heading is a
+/// card with icon, whose icon is that of an issue or of a pull request, and a
+/// related item carries the icon of its kind. A screen reader reads each.
 #[test_log::test(tokio::test)]
 async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_pull_request() {
     let pull = Pull {
@@ -616,11 +617,11 @@ async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_p
         ("/items/2", "Closes", pull_request, issue),
     ] {
         let html = pages.page(path).await;
-        let heading: Vec<_> = select(&html, "#heading h1 > svg[role=img]")
+        let heading_icons: Vec<_> = select(&html, "#heading h1 svg[role=img]")
             .into_iter()
             .map(kind)
             .collect();
-        assert_eq!(heading, [own], "{path}");
+        assert_eq!(heading_icons, [own], "{path}");
         let at = item_facts(&html)
             .iter()
             .position(|(label, _)| label == related)
