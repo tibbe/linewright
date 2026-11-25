@@ -44,7 +44,7 @@ use super::making::{
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
-use super::table::{Align, View};
+use super::table::{Align, TableRows, View};
 use super::write::{Refused, Write};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, cookie_headers,
@@ -220,10 +220,10 @@ struct Shown {
     benchmark: Benchmark,
     /// How many tasks it has, on every page.
     task_count: usize,
-    tasks: Vec<TaskRow>,
+    tasks: TableRows<TaskRow>,
     tasks_nav: Option<PagesShown>,
     /// Latest first.
-    benchmark_runs: Vec<BenchmarkRunRow>,
+    benchmark_runs: TableRows<BenchmarkRunRow>,
     benchmark_runs_nav: Option<PagesShown>,
 }
 
@@ -348,9 +348,9 @@ struct BenchmarkPage {
     /// The tab that shows.
     tab: BenchmarkTab,
     tab_links: Vec<TabLink>,
-    tasks: Vec<TaskRow>,
+    tasks: TableRows<TaskRow>,
     tasks_nav: Option<PagesShown>,
-    benchmark_runs: Vec<BenchmarkRunRow>,
+    benchmark_runs: TableRows<BenchmarkRunRow>,
     benchmark_runs_nav: Option<PagesShown>,
     /// "New" on the benchmark runs, which opens the New benchmark run dialog.
     new_benchmark_run_offer: Html,
@@ -382,14 +382,14 @@ impl BenchmarkPage {
 #[derive(Template)]
 #[template(path = "benchmark_tasks.html")]
 struct TasksRegion<'a> {
-    tasks: &'a [TaskRow],
+    tasks: &'a TableRows<TaskRow>,
     tasks_nav: Option<&'a PagesShown>,
 }
 
 #[derive(Template)]
 #[template(path = "benchmark_benchmark_runs.html")]
 struct BenchmarkRunsRegion<'a> {
-    benchmark_runs: &'a [BenchmarkRunRow],
+    benchmark_runs: &'a TableRows<BenchmarkRunRow>,
     benchmark_runs_nav: Option<&'a PagesShown>,
 }
 
@@ -611,11 +611,14 @@ async fn shown(
             let benchmark_runs_page = Pages::of(benchmark_runs.len(), paging.benchmark_runs);
             Ok(Shown {
                 task_count: tasks.len(),
-                tasks: tasks_page
-                    .shows(tasks)
-                    .into_iter()
-                    .map(TaskRow::of)
-                    .collect(),
+                tasks: TableRows::of(
+                    tasks_page
+                        .shows(tasks)
+                        .into_iter()
+                        .map(TaskRow::of)
+                        .collect(),
+                    "tasks",
+                ),
                 tasks_nav: tasks_page.shown("tasks", |page| {
                     Paging {
                         tasks: page,
@@ -623,11 +626,14 @@ async fn shown(
                     }
                     .href(benchmark.id, BenchmarkTab::Tasks)
                 }),
-                benchmark_runs: benchmark_runs_page
-                    .shows(benchmark_runs)
-                    .iter()
-                    .map(BenchmarkRunRow::of)
-                    .collect(),
+                benchmark_runs: TableRows::of(
+                    benchmark_runs_page
+                        .shows(benchmark_runs)
+                        .iter()
+                        .map(BenchmarkRunRow::of)
+                        .collect(),
+                    "benchmark runs",
+                ),
                 benchmark_runs_nav: benchmark_runs_page.shown("benchmark runs", |page| {
                     Paging {
                         benchmark_runs: page,
@@ -775,7 +781,7 @@ async fn benchmark_page_on(
             benchmark_runs_nav,
         }) => {
             let path = benchmark_path(benchmark.id);
-            let tab = BenchmarkTab::opened(tab, !benchmark_runs.is_empty());
+            let tab = BenchmarkTab::opened(tab, matches!(benchmark_runs, TableRows::Rows(_)));
             let tab_links = BenchmarkTab::ALL
                 .into_iter()
                 .map(|link| TabLink {

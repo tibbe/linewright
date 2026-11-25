@@ -2,9 +2,10 @@
 <div id="benchmarks">
 {%- match benchmarks %}
 {%- when BenchmarksShown::Table { rows, pages } %}
-{%- if rows.is_empty() %}
-<p class="px-4 pb-4">No benchmarks</p>
-{%- else %}
+{%- match rows %}
+{%- when crate::table::TableRows::Empty(no_rows) %}
+{{ no_rows }}
+{%- when crate::table::TableRows::Rows(rows) %}
 <div class="overflow-x-auto">
 <table class="table">
 <thead><tr>{% for column in BenchmarksColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
@@ -31,7 +32,7 @@
 {%- if let Some(pages) = pages %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}
-{%- endif %}
+{%- endmatch %}
 {%- when BenchmarksShown::Unlisted(error) %}
 <p class="px-4 pb-4">{{ error }}</p>
 {%- endmatch %}

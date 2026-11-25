@@ -28,7 +28,7 @@ use super::html::{self, Html};
 use super::making::{self, Answer, Field, FieldRefusals, Form, MadeShown, Making, Refusal};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
-use super::table::{Align, View};
+use super::table::{Align, TableRows, View};
 use super::write::Write;
 use super::{Page, benchmark_path, benchmark_run_path, events, given, render, with_filters};
 
@@ -187,7 +187,7 @@ impl BenchmarksColumn {
 /// them, or why they are not listed.
 enum BenchmarksShown {
     Table {
-        rows: Vec<Row>,
+        rows: TableRows<Row>,
         pages: Option<PagesShown>,
     },
     Unlisted(String),
@@ -275,7 +275,10 @@ async fn listed(
     match actions::list_benchmarks(permit, sources, narrowed).await {
         Ok(BenchmarksScreen { benchmarks }) => {
             let pages = Pages::of(benchmarks.len(), narrowing.page);
-            let rows = pages.shows(benchmarks).into_iter().map(Row::of).collect();
+            let rows = TableRows::of(
+                pages.shows(benchmarks).into_iter().map(Row::of).collect(),
+                "benchmarks",
+            );
             let pages = pages.shown("benchmarks", |page| narrowing.href(page));
             (StatusCode::OK, BenchmarksShown::Table { rows, pages })
         }

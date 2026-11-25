@@ -1,6 +1,8 @@
 //! A table in its card (`docs/specs/components.md`, Table), which the
 //! `table_card` macro draws.
 
+use askama::Template;
+
 /// How a column's head and cells align (`docs/specs/components.md`, Table,
 /// Columns).
 pub(super) enum Align {
@@ -17,6 +19,56 @@ impl Align {
         }
     }
 }
+
+/// A table's rows, or that it has none (`docs/specs/components.md`, Table,
+/// Empty).
+pub(super) enum TableRows<R> {
+    Empty(NoRows),
+    Rows(Rows<R>),
+}
+
+/// At least one row.
+pub(super) struct Rows<R>(Vec<R>);
+
+impl<R> TableRows<R> {
+    /// The rows `rows`, or, where there are none, "No" and `what` they are,
+    /// in the plural, such as "tasks".
+    pub(super) fn of(rows: Vec<R>, what: &'static str) -> TableRows<R> {
+        if rows.is_empty() {
+            TableRows::Empty(NoRows { what })
+        } else {
+            TableRows::Rows(Rows(rows))
+        }
+    }
+
+    /// The same rows, or none, each made into `row(it)`.
+    pub(super) fn map<'a, S>(&'a self, row: impl FnMut(&'a R) -> S) -> TableRows<S> {
+        match self {
+            TableRows::Empty(no_rows) => TableRows::Empty(*no_rows),
+            TableRows::Rows(Rows(rows)) => TableRows::Rows(Rows(rows.iter().map(row).collect())),
+        }
+    }
+}
+
+impl<'a, R> IntoIterator for &'a Rows<R> {
+    type Item = &'a R;
+    type IntoIter = std::slice::Iter<'a, R>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+/// What a table with no rows shows in place of its `table`
+/// (`docs/specs/components.md`, Table, Empty).
+#[derive(Clone, Copy, Template)]
+#[template(source = r#"<p class="px-4 pb-4">No {{ what }}</p>"#, ext = "html")]
+pub(super) struct NoRows {
+    /// What the rows are, in the plural, such as "tasks".
+    what: &'static str,
+}
+
+impl askama::filters::HtmlSafe for NoRows {}
 
 /// The part of a table card that the `table_card` macro asks its caller to
 /// draw.

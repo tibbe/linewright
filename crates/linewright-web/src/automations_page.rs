@@ -19,14 +19,14 @@ use super::html::{self, Html};
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
-use super::table::Align;
+use super::table::{Align, TableRows};
 use super::{ErrorPage, Page, events, render, run_path, with_filters};
 
 /// The automations, ready for the page: a page of their rows, with the pages
 /// under them.
 struct AutomationsShown {
     unparsed: Vec<Html>,
-    rows: Vec<RowShown>,
+    rows: TableRows<RowShown>,
     pages: Option<PagesShown>,
 }
 
@@ -100,32 +100,35 @@ impl AutomationsShown {
                 .iter()
                 .map(|file| html(&status::does_not_parse(file)))
                 .collect(),
-            rows: automations.automations[pages.range()]
-                .iter()
-                .map(|row| RowShown {
-                    name: row.name.clone(),
-                    trigger: row.when.clone(),
-                    last_run: match &row.last_run {
-                        LastRunScreen::Run {
-                            run,
-                            last_run_outcome,
-                        } => LastRunShown::Run {
-                            id: html::escape(&run.id.to_string()),
-                            href: run_path(&run.id),
-                            about: html(&runs::describe_start(run.by_hand(), run.started_at)),
-                            status: last_run_outcome.status(),
-                            word: last_run_outcome.word(),
+            rows: TableRows::of(
+                automations.automations[pages.range()]
+                    .iter()
+                    .map(|row| RowShown {
+                        name: row.name.clone(),
+                        trigger: row.when.clone(),
+                        last_run: match &row.last_run {
+                            LastRunScreen::Run {
+                                run,
+                                last_run_outcome,
+                            } => LastRunShown::Run {
+                                id: html::escape(&run.id.to_string()),
+                                href: run_path(&run.id),
+                                about: html(&runs::describe_start(run.by_hand(), run.started_at)),
+                                status: last_run_outcome.status(),
+                                word: last_run_outcome.word(),
+                            },
+                            LastRunScreen::NoneYet { first_seen } => {
+                                LastRunShown::NoneYet(html(&match first_seen {
+                                    Some(at) => Phrase::from("none yet, first seen ").time(*at),
+                                    None => "none yet".into(),
+                                }))
+                            }
                         },
-                        LastRunScreen::NoneYet { first_seen } => {
-                            LastRunShown::NoneYet(html(&match first_seen {
-                                Some(at) => Phrase::from("none yet, first seen ").time(*at),
-                                None => "none yet".into(),
-                            }))
-                        }
-                    },
-                    next_run: status::describe_next_run(row.trigger).map(|next| html(&next)),
-                })
-                .collect(),
+                        next_run: status::describe_next_run(row.trigger).map(|next| html(&next)),
+                    })
+                    .collect(),
+                "automations",
+            ),
             pages: pages.shown("automations", |page| {
                 PageHref::at(path("/automations", page))
             }),

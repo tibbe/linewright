@@ -11,12 +11,11 @@ use super::html::{self, Html};
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_path;
-use super::table::{Align, View};
+use super::table::{Align, TableRows, View};
 
-/// A list of runs, ready for a page, or why there is none.
+/// A list of runs, ready for a page, or why it was not listed.
 pub(super) enum RunsShown {
     Table(Box<RunsTable>),
-    NoRuns,
     /// Why the runs were not listed, such as a narrowing that does not read.
     Unlisted(String),
 }
@@ -30,8 +29,8 @@ pub(super) struct RunsTable {
 
 /// Newest first, with an Item cell in every row or in none.
 enum Rows {
-    WithItems(Vec<(ItemCell, RunRow)>),
-    WithoutItems(Vec<RunRow>),
+    WithItems(TableRows<(ItemCell, RunRow)>),
+    WithoutItems(TableRows<RunRow>),
 }
 
 pub(super) struct RunRow {
@@ -152,41 +151,35 @@ impl RunsShown {
         href: impl Fn(Requested) -> PageHref,
     ) -> RunsShown {
         let pages = Pages::of(listing.runs.len(), requested);
-        let rows = Rows::WithItems(
+        let rows = Rows::WithItems(TableRows::of(
             listing.runs[pages.range()]
                 .iter()
                 .map(|run| (ItemCell::of(&run.id.of, naming), RunRow::of(run, naming)))
                 .collect(),
-        );
-        RunsShown::of(&listing.runs, rows, None, pages.shown("runs", href))
+            "runs",
+        ));
+        RunsShown::of(rows, None, pages.shown("runs", href))
     }
 
     /// #`item`'s runs, as `runs` listed them narrowed to it, without the
     /// Item column; the earlier runs it left out listed on the runs page.
     pub(super) fn of_item(listed: &ItemRuns, item: Number, naming: &Naming) -> RunsShown {
-        let rows = Rows::WithoutItems(
+        let rows = Rows::WithoutItems(TableRows::of(
             listed
                 .runs
                 .iter()
                 .map(|run| RunRow::of(run, naming))
                 .collect(),
-        );
+            "runs",
+        ));
         let left_out = (listed.left_out > 0).then(|| LeftOut {
             earlier: runs::earlier_runs(listed.left_out),
             href: format!("/runs?item={}", item.0),
         });
-        RunsShown::of(&listed.runs, rows, left_out, None)
+        RunsShown::of(rows, left_out, None)
     }
 
-    fn of(
-        runs: &[Run],
-        rows: Rows,
-        left_out: Option<LeftOut>,
-        pages: Option<PagesShown>,
-    ) -> RunsShown {
-        if runs.is_empty() {
-            return RunsShown::NoRuns;
-        }
+    fn of(rows: Rows, left_out: Option<LeftOut>, pages: Option<PagesShown>) -> RunsShown {
         RunsShown::Table(Box::new(RunsTable {
             rows,
             left_out,
@@ -221,11 +214,12 @@ impl RunsTable {
         matches!(self.rows, Rows::WithItems(_))
     }
 
-    /// Each row, with its Item cell if the table has the column.
-    pub(super) fn rows(&self) -> Vec<(Option<&ItemCell>, &RunRow)> {
+    /// Its rows, each with its Item cell if the table has the column, or
+    /// that it has none.
+    pub(super) fn rows(&self) -> TableRows<(Option<&ItemCell>, &RunRow)> {
         match &self.rows {
-            Rows::WithItems(rows) => rows.iter().map(|(item, row)| (Some(item), row)).collect(),
-            Rows::WithoutItems(rows) => rows.iter().map(|row| (None, row)).collect(),
+            Rows::WithItems(rows) => rows.map(|(item, row)| (Some(item), row)),
+            Rows::WithoutItems(rows) => rows.map(|row| (None, row)),
         }
     }
 
