@@ -13,11 +13,11 @@ use linewright_core::phrase::{Phrase, Status};
 use linewright_core::status;
 
 use super::caller::Reader;
-use super::cards::{self, lane_head, line_html};
-use super::components::{Fit, ItemName, ItemNumber};
-use super::facts::{Fact, Piece};
+use super::cards::{self, line_html};
+use super::facts::{Fact, Piece, RelatedItem};
 use super::html::{self, Html};
 use super::icons::CardIcon;
+use super::item_parts::{Cut, ItemNumberLink, ItemTitle};
 use super::names::Naming;
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
@@ -36,18 +36,30 @@ impl ItemShown {
     }
 }
 
+/// #N's title, then its number, in its heading's `card-title`
+/// (`docs/specs/board.md`, Item, Heading).
+#[derive(Template)]
+#[template(source = "<span>{{ title }} {{ number }}</span>", ext = "html")]
+struct HeadingName<'a> {
+    title: ItemTitle<'a>,
+    number: ItemNumberLink<'a>,
+}
+
 /// #N's heading: a card with the icon of an issue or a pull request, its
 /// name, and under it when `serve` last read it (`docs/specs/board.md`, Item,
 /// Heading).
 fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
     Heading {
         title: format!("{} {}", facts.title, facts.number),
-        name: html::rendered(&ItemName {
-            number: facts.number,
-            title: &facts.title,
-            repo,
-            fit: Fit::Wrap,
-        }),
+        name: {
+            let title = ItemTitle {
+                number: facts.number,
+                title: &facts.title,
+                cut: Cut::Wrap,
+            };
+            let number = ItemNumberLink::after(&title, repo);
+            html::rendered(&HeadingName { title, number })
+        },
         icon: Some(CardIcon::Item(ItemKind::of(facts.pull_request))),
         state: None,
         line: Some(html::escape("as of ").then(&html::time(facts.last_read))),
@@ -61,17 +73,23 @@ fn shown_facts(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Fact> {
     let repo = naming.repo();
     let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, naming));
     let fact = |label, lines: Vec<Vec<Piece>>| (!lines.is_empty()).then_some(Fact { label, lines });
-    let items =
-        |items: &[RelatedScreen]| items.iter().map(|item| vec![related(item, repo)]).collect();
+    let items = |items: &[RelatedScreen]| {
+        items
+            .iter()
+            .map(|item| vec![Piece::Items(vec![related(item, repo)])])
+            .collect()
+    };
     let tickets = facts.tickets.map(|tickets| {
         let closed = format!("{} of {} closed", tickets.tickets_closed, tickets.tickets);
         vec![
             vec![text(&closed.into())],
-            facts
-                .ticket_items
-                .iter()
-                .map(|ticket| related(ticket, repo))
-                .collect(),
+            vec![Piece::Items(
+                facts
+                    .ticket_items
+                    .iter()
+                    .map(|ticket| related(ticket, repo))
+                    .collect(),
+            )],
         ]
     });
     [
@@ -143,34 +161,44 @@ fn state(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Piece> {
     pieces
 }
 
-/// An item a fact lists, as its card is: its item name on one line, or its
+/// An item a fact lists, as its card is: its title and number, or its
 /// number alone where its title is not known; or a tracking issue as its
 /// lane's head is, with no card status.
-fn related(item: &RelatedScreen, repo: &str) -> Piece {
+fn related(item: &RelatedScreen, repo: &str) -> RelatedItem {
     match item {
         RelatedScreen::Card {
             number,
             title,
             pull_request,
             status,
-        } => Piece::Item {
-            status: status.map(cards::status),
-            kind: ItemKind::of(*pull_request),
-            name: match title {
-                Some(title) => html::rendered(&ItemName {
+        } => {
+            let kind = ItemKind::of(*pull_request);
+            let status = status.map(cards::status);
+            match title {
+                Some(title) => RelatedItem::Read {
+                    kind,
+                    status,
                     number: *number,
-                    title,
-                    repo,
-                    fit: Fit::OneLine,
-                }),
-                None => html::rendered(&ItemNumber {
+                    title: title.clone(),
+                    repo: repo.to_owned(),
+                    rest: None,
+                },
+                None => RelatedItem::Unread {
+                    kind,
+                    status,
                     number: *number,
-                    repo,
-                    kind: None,
-                }),
-            },
+                    repo: repo.to_owned(),
+                },
+            }
+        }
+        RelatedScreen::LaneHead(lane) => RelatedItem::Read {
+            kind: ItemKind::of(lane.pull_request),
+            status: None,
+            number: lane.number,
+            title: lane.title.clone(),
+            repo: repo.to_owned(),
+            rest: Some(cards::lane_rest(lane).unwrap_or_default()),
         },
-        RelatedScreen::LaneHead(lane) => Piece::LaneHead(lane_head(lane, repo)),
     }
 }
 

@@ -9,13 +9,13 @@ use serde::Deserialize;
 
 use linewright_core::actions::{self, BoardScreen, CardScreen, LaneScreen};
 use linewright_core::board::Column;
-use linewright_core::domain::{ItemKind, Login};
+use linewright_core::domain::{ItemKind, Login, Number};
 use linewright_core::phrase::Status;
 
 use super::caller::Reader;
 use super::cards::{self, lane_head, line_html};
-use super::components::{Fit, ItemName};
-use super::html::{self, Html};
+use super::html::Html;
+use super::item_parts::{Cut, ItemNumberLink, ItemTitle};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, render, with_filters};
 
@@ -59,8 +59,10 @@ struct CellShown {
 
 /// A card (`docs/specs/board.md`, Cards).
 struct CardShown {
-    /// Its item name, on one line.
-    name: Html,
+    number: Number,
+    title: String,
+    /// The repo its item is in.
+    repo: String,
     kind: ItemKind,
     /// The status its card status shows as, if it has one.
     status: Option<Status>,
@@ -126,17 +128,30 @@ fn counted(n: usize, thing: &str) -> String {
 impl CardShown {
     fn of(card: &CardScreen, repo: &str) -> CardShown {
         CardShown {
-            name: html::rendered(&ItemName {
-                number: card.number,
-                title: &card.title,
-                repo,
-                fit: Fit::OneLine,
-            }),
+            number: card.number,
+            title: card.title.clone(),
+            repo: repo.to_owned(),
             kind: ItemKind::of(card.pull_request),
             status: card.status.map(cards::status),
             line: card.line.as_ref().map(|line| line_html(line, repo)),
             quiet: card.column == Column::Done,
         }
+    }
+}
+
+impl CardShown {
+    /// Its title, cut to fit its `card-title`.
+    fn title_link(&self) -> ItemTitle<'_> {
+        ItemTitle {
+            number: self.number,
+            title: &self.title,
+            cut: Cut::ToFit,
+        }
+    }
+
+    /// Its number, after its title.
+    fn number_link(&self) -> ItemNumberLink<'_> {
+        ItemNumberLink::after(&self.title_link(), &self.repo)
     }
 }
 

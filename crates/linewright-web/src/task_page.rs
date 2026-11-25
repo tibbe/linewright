@@ -17,11 +17,11 @@ use linewright_core::benchmarks::{CriteriaAnswer, TaskId};
 
 use super::buttons::{ScreenButton, Verb};
 use super::caller::Reader;
-use super::components::{Fit, ItemName};
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
 use super::icons::CardIcon;
+use super::item_parts::{Cut, ItemNumberLink, ItemTitle};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::stats::{Stat, absent};
 use super::{ErrorPage, Page, benchmark_path, events, nothing_there, render, run_path};
@@ -52,6 +52,15 @@ enum ItemAndStart {
     Unreadable(String),
 }
 
+/// The task's item (`docs/specs/benchmarks.md`, Task, The task's item):
+/// its title as it was at the start, then its number.
+#[derive(Template)]
+#[template(source = "<span>{{ title }} {{ number }}</span>", ext = "html")]
+struct TaskItem<'a> {
+    title: ItemTitle<'a>,
+    number: ItemNumberLink<'a>,
+}
+
 /// A task as Task shows it.
 struct TaskView {
     /// The run it was captured from, linking to its Run.
@@ -78,12 +87,15 @@ impl TaskView {
                     title,
                     started_at,
                 } => ItemAndStart::Read {
-                    item: html::rendered(&ItemName {
-                        number: *item,
-                        title,
-                        repo,
-                        fit: Fit::Wrap,
-                    }),
+                    item: {
+                        let title = ItemTitle {
+                            number: *item,
+                            title,
+                            cut: Cut::Wrap,
+                        };
+                        let number = ItemNumberLink::after(&title, repo);
+                        html::rendered(&TaskItem { title, number })
+                    },
                     started: html::time(*started_at),
                 },
                 TaskFactsScreen::Unreadable { facts_unreadable } => {

@@ -1,6 +1,6 @@
 //! A page's facts about one thing (`docs/specs/components.md`, Facts).
 
-use linewright_core::domain::ItemKind;
+use linewright_core::domain::{ItemKind, Number};
 use linewright_core::phrase::Status;
 
 use super::html::Html;
@@ -20,18 +20,36 @@ pub(super) enum Piece<Words = Html> {
         status: Status,
         words: Words,
     },
-    /// An item as its card is (`docs/specs/board.md`, Item,
-    /// Related items): the icon of an issue or a pull request, then its card
-    /// status's icon, if it has one, then its name.
-    Item {
-        status: Option<Status>,
-        kind: ItemKind,
-        name: Words,
-    },
-    /// A tracking issue as its lane's head is.
-    LaneHead(Words),
+    /// The items a fact lists, the whole of its line
+    /// (`docs/specs/board.md`, Item, Related items).
+    Items(Vec<RelatedItem>),
     /// Markup of its own, such as a build of the environment's.
     Markup(Html),
+}
+
+/// An item a fact lists (`docs/specs/board.md`, Item, Related items), in
+/// the repo `repo`: the icon of an issue or a pull request, then its card
+/// status's icon, if its card shows one, then its name.
+pub(super) enum RelatedItem {
+    /// An item that Linewright has read, named by its title, cut to fit its
+    /// line, then its number. A tracking issue has a `rest`, the rest of its
+    /// lane's head after them, empty where the head has nothing more, and
+    /// is drawn as its lane's head is.
+    Read {
+        kind: ItemKind,
+        status: Option<Status>,
+        number: Number,
+        title: String,
+        repo: String,
+        rest: Option<Html>,
+    },
+    /// An item that Linewright has not read, named by its number alone.
+    Unread {
+        kind: ItemKind,
+        status: Option<Status>,
+        number: Number,
+        repo: String,
+    },
 }
 
 impl<Words> Fact<Words> {
@@ -50,12 +68,7 @@ impl<Words> Fact<Words> {
                                 status,
                                 words: draw(words),
                             },
-                            Piece::Item { status, kind, name } => Piece::Item {
-                                status,
-                                kind,
-                                name: draw(name),
-                            },
-                            Piece::LaneHead(heading) => Piece::LaneHead(draw(heading)),
+                            Piece::Items(items) => Piece::Items(items),
                             Piece::Markup(markup) => Piece::Markup(markup),
                         })
                         .collect()

@@ -21,6 +21,7 @@ mod facts;
 pub(crate) mod html;
 mod icons;
 mod item_page;
+mod item_parts;
 pub(crate) mod launch;
 mod logos;
 mod making;
