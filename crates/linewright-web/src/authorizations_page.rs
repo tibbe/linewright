@@ -22,7 +22,7 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Frame, Navigation, Place};
-use super::table::Align;
+use super::table::{Align, TableRows};
 use super::write::{Refused, Write};
 use super::{ErrorPage, Page, events, render, with_filters};
 
@@ -82,7 +82,7 @@ impl AuthorizationsColumn {
 /// The authorizations, ready for the page: a page of their rows, with the
 /// pages under them.
 struct AuthorizationsShown {
-    rows: Vec<RowShown>,
+    rows: TableRows<RowShown>,
     pages: Option<PagesShown>,
 }
 
@@ -109,16 +109,19 @@ impl AuthorizationsShown {
     fn of(authorizations: &[AuthorizationListed], requested: Requested) -> AuthorizationsShown {
         let pages = Pages::of(authorizations.len(), requested);
         AuthorizationsShown {
-            rows: authorizations[pages.range()]
-                .iter()
-                .map(|authorization| RowShown {
-                    client: client_name(authorization.client_name.as_deref()).to_string(),
-                    sends_back_to: authorization.redirect_uri.host().to_string(),
-                    allowed: html::time(authorization.allowed_at),
-                    ends: html::time(authorization.ends_at),
-                    end: end_dialog(authorization.id),
-                })
-                .collect(),
+            rows: TableRows::of(
+                authorizations[pages.range()]
+                    .iter()
+                    .map(|authorization| RowShown {
+                        client: client_name(authorization.client_name.as_deref()).to_string(),
+                        sends_back_to: authorization.redirect_uri.host().to_string(),
+                        allowed: html::time(authorization.allowed_at),
+                        ends: html::time(authorization.ends_at),
+                        end: end_dialog(authorization.id),
+                    })
+                    .collect(),
+                "authorizations",
+            ),
             pages: pages.shown("authorizations", |page| PageHref::at(path(page))),
         }
     }

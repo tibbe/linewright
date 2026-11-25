@@ -904,6 +904,23 @@ async fn a_person_sees_their_authorizations_and_ends_one() {
     );
 }
 
+/// `docs/specs/access.md`, Authorizations; `docs/specs/components.md`,
+/// Table, Empty.
+#[test_log::test(tokio::test)]
+async fn a_person_with_no_authorizations_sees_no_authorizations() {
+    let signing = signing(None).await;
+    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
+    let mut browser = Browsing::with_cookie(&signing, &person);
+
+    let page = browser.get("/authorizations").await;
+
+    assert_eq!(page.status, 200, "{}", page.html.html());
+    assert_eq!(select(&page.html, "#authorizations table").len(), 0);
+    let said = select(&page.html, "#authorizations p.px-4.pb-4");
+    assert_eq!(said.len(), 1, "{}", page.html.html());
+    assert_eq!(text(said[0]), "No authorizations");
+}
+
 /// `docs/specs/access.md`, Out of scope: seeing or ending another person's
 /// authorizations.
 #[test_log::test(tokio::test)]

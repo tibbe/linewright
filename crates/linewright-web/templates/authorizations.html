@@ -6,11 +6,15 @@
 <section id="authorizations" class="flex min-h-0 flex-1 flex-col">
 {%- call(part) ui::table_card("Authorizations", Some(crate::icons::CardIcon::Authorizations), shows_name = true, heading = crate::components::HeadingLevel::H1) %}
 {%- if part == crate::table::Part::Table %}
+{%- match authorizations.rows %}
+{%- when crate::table::TableRows::Empty(no_rows) %}
+{{ no_rows }}
+{%- when crate::table::TableRows::Rows(rows) %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
 <thead><tr>{% for column in AuthorizationsColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
-{%- for row in authorizations.rows %}
+{%- for row in rows %}
 <tr>
 <th class="{{ AuthorizationsColumn::Client.align().class() }} whitespace-nowrap">{{ row.client }}</th>
 <td class="{{ AuthorizationsColumn::SendsBackTo.align().class() }}">{{ row.sends_back_to }}</td>
@@ -25,6 +29,7 @@
 {%- if let Some(pages) = authorizations.pages %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}
+{%- endmatch %}
 {%- endif %}
 {%- endcall %}
 </section>

@@ -28,7 +28,7 @@ use super::logos::identity_logo;
 use super::making::{Answer, Field, FieldRefusals, Form, Making, REQUIRED, Refusal};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Missing, Navigation, Place};
-use super::table::Align;
+use super::table::{Align, TableRows};
 use super::write::{Refused, Write};
 use super::{ErrorPage, Page, events, render, with_filters};
 
@@ -86,7 +86,7 @@ impl PeopleColumn {
 /// under them.
 struct PeopleShown {
     columns: Vec<PeopleColumn>,
-    rows: Vec<RowShown>,
+    rows: TableRows<RowShown>,
     pages: Option<PagesShown>,
 }
 
@@ -159,35 +159,38 @@ impl PeopleShown {
         }
         PeopleShown {
             columns,
-            rows: people[pages.range()]
-                .iter()
-                .map(|PersonListed { person, protected }| {
-                    let (status, state) = state_shown(person.state);
-                    RowShown {
-                        name: person.shown_name().to_string(),
-                        avatar: person.avatar.as_ref().map(ToString::to_string),
-                        letter: person.letter(),
-                        logo: identity_logo(person.identity.provider),
-                        identity: person.shown_as.clone(),
-                        role: person.role.name(),
-                        status,
-                        state,
-                        signed_in: html::time(person.signed_in_at),
-                        buttons: manages.then(|| RowButtons {
-                            protected: protected.as_ref().map(ToString::to_string),
-                            edit: edit_dialog(person.id),
-                            state: match person.state {
-                                PersonState::Enabled => {
-                                    StateButton::Disable(disable_dialog(person.id))
-                                }
-                                PersonState::Disabled => {
-                                    StateButton::Enable(person_path(person.id, "enable"))
-                                }
-                            },
-                        }),
-                    }
-                })
-                .collect(),
+            rows: TableRows::of(
+                people[pages.range()]
+                    .iter()
+                    .map(|PersonListed { person, protected }| {
+                        let (status, state) = state_shown(person.state);
+                        RowShown {
+                            name: person.shown_name().to_string(),
+                            avatar: person.avatar.as_ref().map(ToString::to_string),
+                            letter: person.letter(),
+                            logo: identity_logo(person.identity.provider),
+                            identity: person.shown_as.clone(),
+                            role: person.role.name(),
+                            status,
+                            state,
+                            signed_in: html::time(person.signed_in_at),
+                            buttons: manages.then(|| RowButtons {
+                                protected: protected.as_ref().map(ToString::to_string),
+                                edit: edit_dialog(person.id),
+                                state: match person.state {
+                                    PersonState::Enabled => {
+                                        StateButton::Disable(disable_dialog(person.id))
+                                    }
+                                    PersonState::Disabled => {
+                                        StateButton::Enable(person_path(person.id, "enable"))
+                                    }
+                                },
+                            }),
+                        }
+                    })
+                    .collect(),
+                "people",
+            ),
             pages: pages.shown("people", |page| PageHref::at(path(PATH, page))),
         }
     }
