@@ -17,7 +17,7 @@ use super::cards::{self, line_html};
 use super::facts::{Fact, Piece, RelatedItem};
 use super::html::{self, Html};
 use super::icons::CardIcon;
-use super::item_parts::{Cut, ItemNumberLink, ItemTitle, Weight};
+use super::item_parts::{TextItem, Weight};
 use super::names::Naming;
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
@@ -36,31 +36,18 @@ impl ItemShown {
     }
 }
 
-/// #N's title, then its number, in its heading's `card-title`
-/// (`docs/specs/board.md`, Item, Heading): the two sit in the
-/// `card-title` itself, at its gap, the number in `font-normal`.
-#[derive(Template)]
-#[template(source = "{{ title }} {{ number }}", ext = "html")]
-struct HeadingName<'a> {
-    title: ItemTitle<'a>,
-    number: ItemNumberLink<'a>,
-}
-
 /// #N's heading: a card with the icon of an issue or a pull request, its
 /// name, and under it when `serve` last read it (`docs/specs/board.md`, Item,
 /// Heading).
 fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
     Heading {
         title: format!("{} {}", facts.title, facts.number),
-        name: {
-            let title = ItemTitle {
-                number: facts.number,
-                title: &facts.title,
-                cut: Cut::Wrap,
-            };
-            let number = ItemNumberLink::after(&title, repo, Weight::Normal);
-            html::rendered(&HeadingName { title, number })
-        },
+        name: html::rendered(&TextItem::of(
+            facts.number,
+            &facts.title,
+            repo,
+            Weight::Normal,
+        )),
         icon: Some(CardIcon::Item(ItemKind::of(facts.pull_request))),
         state: None,
         line: Some(html::escape("as of ").then(&html::time(facts.last_read))),

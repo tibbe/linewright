@@ -747,7 +747,7 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
     ];
     assert_eq!((row[2].as_str(), &cell_links), ("Ship gh #1", &links));
     assert_eq!(item_line(&html), ("Ship gh #1".to_string(), links));
-    assert_title_then_number_gap_1_apart(select(&html, "#heading .line")[0]);
+    assert_title_then_number_as_one_text(select(&html, "#heading .line")[0]);
     assert_no_words_loose_in_a_flex(&html, "#heading .line");
 }
 
@@ -838,6 +838,14 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
             "automation weekly.md".to_string(),
             vec!["/automations".to_string()]
         )
+    );
+    let automation = select(&html, "#heading .line > a")[0];
+    assert!(
+        has_classes(automation, &["link", "link-hover"])
+            && lacks_classes(automation, &["truncate"])
+            && automation.attr("data-tip-cut").is_none(),
+        "{}",
+        automation.html()
     );
 }
 

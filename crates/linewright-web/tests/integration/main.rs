@@ -1364,22 +1364,25 @@ fn parts(holder: ElementRef) -> Vec<String> {
     holder
         .children()
         .filter_map(ElementRef::wrap)
-        .map(|part| {
-            let element = part.value();
-            let href = part.attr("href").unwrap_or_default();
-            match element.name() {
-                "svg" => format!("icon {}", part.attr("data-icon").unwrap_or_default()),
-                "a" if href.starts_with("/items/") => "title".to_string(),
-                "a" if href.starts_with("https://github.com/") => "number".to_string(),
-                _ if has_classes(part, &["tail"]) => "rest".to_string(),
-                name => {
-                    let mut classes: Vec<&str> = element.classes().collect();
-                    classes.sort_unstable();
-                    format!("{name}.{}", classes.join("."))
-                }
-            }
-        })
+        .map(part_name)
         .collect()
+}
+
+/// What `part` is, as [`parts`] names it.
+fn part_name(part: ElementRef) -> String {
+    let element = part.value();
+    let href = part.attr("href").unwrap_or_default();
+    match element.name() {
+        "svg" => format!("icon {}", part.attr("data-icon").unwrap_or_default()),
+        "a" if href.starts_with("/items/") => "title".to_string(),
+        "a" if href.starts_with("https://github.com/") => "number".to_string(),
+        _ if has_classes(part, &["tail"]) => "rest".to_string(),
+        name => {
+            let mut classes: Vec<&str> = element.classes().collect();
+            classes.sort_unstable();
+            format!("{name}.{}", classes.join("."))
+        }
+    }
 }
 
 /// Asserts that no flex container in `html` holds words of its own beside
@@ -1407,10 +1410,41 @@ fn assert_no_words_loose_in_a_flex(html: &Html, within: &str) {
     }
 }
 
+/// Asserts that `holder` names a read item by its title, then a space, then
+/// its number, as one text that wraps between words: the two links and the
+/// space between them in one element that is not flex, the number in
+/// secondary text (`docs/specs/board.md`, Item, Heading, and Items in
+/// Waiting for and in what keeps #N out; `docs/specs/runs.md`, Run, The
+/// heading's item). Returns the element that holds them.
+fn assert_title_then_number_as_one_text(holder: ElementRef) -> ElementRef {
+    let shown = holder.html();
+    let name = select_in(holder, ":has(> a[href^='/items/'])");
+    assert_eq!(name.len(), 1, "{shown}");
+    let name = name[0];
+    assert!(
+        lacks_classes(name, &["flex", "inline-flex", "card-title"]),
+        "{shown}"
+    );
+    let children: Vec<String> = name
+        .children()
+        .map(|child| match ElementRef::wrap(child) {
+            Some(element) => part_name(element),
+            None => format!(
+                "text {:?}",
+                child.value().as_text().map_or("", |text| &**text)
+            ),
+        })
+        .collect();
+    assert_eq!(children, ["title", "text \" \"", "number"], "{shown}");
+    let number = select_in(name, ":scope > a")[1];
+    assert!(has_classes(number, &["text-base-content/60"]), "{shown}");
+    name
+}
+
 /// Asserts that `holder` names a read item by its title, then its number,
 /// `gap-1` apart, the number in secondary text and in the weight of the
-/// text around it (`docs/specs/runs.md`, Runs, The item, and Run, The
-/// heading's item; `docs/specs/benchmarks.md`, Task, The task's item).
+/// text around it (`docs/specs/runs.md`, Runs, The item;
+/// `docs/specs/benchmarks.md`, Task, The task's item).
 fn assert_title_then_number_gap_1_apart(holder: ElementRef) {
     let shown = holder.html();
     let name = select_in(holder, ":is(.flex, .inline-flex):has(> a[href^='/items/'])");

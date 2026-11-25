@@ -120,10 +120,45 @@ impl<'a> OneLineItem<'a> {
     }
 }
 
+/// An item as one run of text: its title, wrapping, then a space, then its
+/// number, as heavy as `weight` says, in one plain span with no class, so
+/// that the two wrap between words as the text around them does, even in a flex
+/// parent such as a `card-title` (`docs/specs/board.md`, Item, Heading, and
+/// Items in Waiting for and in what keeps #N out; `docs/specs/runs.md`,
+/// Run, The heading's item).
+#[derive(Template)]
+#[template(source = "<span>{{ title }} {{ number }}</span>", ext = "html")]
+pub(super) struct TextItem<'a> {
+    title: ItemTitle<'a>,
+    number: ItemNumberLink<'a>,
+}
+
+impl askama::filters::HtmlSafe for TextItem<'_> {}
+
+impl<'a> TextItem<'a> {
+    /// Item `number`, titled `title`, in the repo `repo`, its number as
+    /// heavy as `weight` says.
+    pub(super) fn of(
+        number: Number,
+        title: &'a str,
+        repo: &'a str,
+        weight: Weight,
+    ) -> TextItem<'a> {
+        let title = ItemTitle {
+            number,
+            title,
+            cut: Cut::Wrap,
+        };
+        TextItem {
+            number: ItemNumberLink::after(&title, repo, weight),
+            title,
+        }
+    }
+}
+
 /// An item among words: its title, wrapping, then its number, `gap-1`
 /// apart, the number in the weight of the words around it
-/// (`docs/specs/board.md`, Item, Items in Waiting for and in what keeps #N
-/// out, and `docs/specs/benchmarks.md`, Task, The task's item).
+/// (`docs/specs/benchmarks.md`, Task, The task's item).
 #[derive(Template)]
 #[template(
     source = r#"<span class="inline-flex max-w-full items-baseline gap-1">{{ title }} {{ number }}</span>"#,
@@ -238,6 +273,23 @@ mod tests {
             html::rendered(&ItemNumberLink::alone(Number(3), REPO)).to_string(),
             number(Weight::Inherit),
             "a number alone is in the weight of the text around it"
+        );
+    }
+
+    /// `docs/specs/board.md`, Item, Heading, and `docs/specs/runs.md`,
+    /// Run, The heading's item.
+    #[test_log::test]
+    fn an_item_as_one_text_is_its_title_a_space_and_its_number_in_a_plain_span() {
+        let item = html::rendered(&TextItem::of(
+            Number(3),
+            "Name the columns",
+            REPO,
+            Weight::Normal,
+        ))
+        .to_string();
+        assert_eq!(
+            item,
+            r#"<span><a class="link link-hover" href="/items/3">Name the columns</a> <a class="link link-hover shrink-0 font-normal text-base-content/60" href="https://github.com/owner/widgets/issues/3">#3</a></span>"#
         );
     }
 
