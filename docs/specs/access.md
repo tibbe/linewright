@@ -418,7 +418,7 @@ For each authorization request:
 - **Layout.** The table "Authorizations"
   ([Tables](ui_patterns.md#tables)). The screen has no breadcrumbs.
 - **The table.** A row per authorization of the reader, newest first. Its
-  card's icon is `key`.
+  card is a [card with icon](components.md#card-with-icon), with the icon `key`.
 
   | Column        | Holds                                     |
   | ------------- | ----------------------------------------- |

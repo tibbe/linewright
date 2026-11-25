@@ -8,11 +8,6 @@ tokens are the classes of daisyUI and Tailwind.
 - **Light or dark.** The light theme, or the dark theme for a reader who
   prefers dark. Each is daisyUI's built-in theme of that name, with the values
   of the table at the end of this section in place of its own.
-- **The colours drawn.** The web UI draws in no colour but `base-100`,
-  `base-200`, `base-300`, `base-content` and the theme's fills, each fill with
-  its content colour on what it holds. The exception is what daisyUI's
-  components draw on their own, such as the shade over the content behind an
-  open `drawer`.
 
 | Variable | Light | Dark |
 | --- | --- | --- |
@@ -62,7 +57,16 @@ tokens are the classes of daisyUI and Tailwind.
   ("mini") style. The exceptions are the icons of an issue and of a pull
   request, which are GitHub's own, from
   [Octicons](https://primer.style/octicons).
-- **Sizes.** An icon is `size-5` before a `card-title`, `size-[1em]` in a
-  `badge`, as daisyUI's badge with an icon has it, and `size-4` elsewhere.
+- **Alignment.** An icon in a line of text is centred vertically on that line.
 - **A component's own icons.** Where a daisyUI component draws an icon of its
   own, such as the arrow of a `select`, it keeps it.
+- **Sizes.** An icon in a daisyUI component is the size that daisyUI's
+  examples of that component give it, in the table below.
+
+| Component | Icon size      |
+| --------- | -------------- |
+| `alert`   | `size-6`       |
+| `badge`   | `size-[1em]`   |
+| `btn`     | `size-[1.2em]` |
+| `input`   | `size-[1em]`   |
+| `menu`    | `size-5`       |

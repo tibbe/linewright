@@ -39,7 +39,7 @@
     compact window size class.
   - **The sidebar** is `w-64`. It has a padding of `px-2`, and `pt-10` at its
     top. The repository is `mx-5` from its sides, with `gap-2` under it, and
-    its avatar is the size of the links' icons, `size-4`. The links are a
+    its avatar is the size of the links' icons. The links are a
     daisyUI `menu`, with daisyUI's padding. Each link is its icon, then its
     name.
   - **The rail** is `w-14`. Its padding is the `menu`'s alone, with `pt-10` at

@@ -11,6 +11,26 @@ component for ([Design system](design_system.md)).
   start. Its top start corner has `rounded-ss-4xl`, in the shape that CSS's
   `corner-start-start-shape: squircle` gives it.
 
+## Card with icon
+
+- **A card with icon** is a card ([Cards](ui_patterns.md#cards)) with a
+  `size-5` icon before its `card-title`.
+
+## Item name
+
+- **An item name** is the item's title, then its number, such as "Name the
+  board's columns #3". Its text is the size of the text around it.
+- **The title** is a daisyUI `link`, `link-hover`, to the item's
+  [Item](board.md#item).
+- **The number** is in secondary text ([Type](ui_patterns.md#type)) and
+  `font-normal`, whatever the weight of the text around it. It is a daisyUI
+  `link`, `link-hover`, to the item on GitHub.
+
+## Paused badge
+
+- **A paused badge** is a daisyUI `badge`, `badge-outline`, in
+  `base-content/60`.
+
 ## Facts
 
 - **The card.** Facts are in a card ([Cards](ui_patterns.md#cards)), in a
@@ -19,7 +39,7 @@ component for ([Design system](design_system.md)).
   (`flex justify-between`).
 - **A label** is words alone, with no icon or colour.
 - **A status among facts** is in the value: a daisyUI `status` dot in its
-  colour, then its icon and the value's words. A paused dot is in
+  colour, then its icon, `size-[1em]`, and the value's words. A paused dot is in
   `bg-base-content/60`.
 
 ## Transcript
@@ -30,9 +50,9 @@ component for ([Design system](design_system.md)).
 - **Entries** are in `font-mono` and `text-sm`.
 - **Lines.** Each entry's line starts with a column for a chevron. An entry that
   opens shows a chevron there: it points right (`chevron-right`) while the entry
-  is closed and down (`chevron-down`) while it is open. In other entries the
-  column is empty. A session's settings and brief files open with the same
-  chevron.
+  is closed and down (`chevron-down`) while it is open. A chevron is `size-4`.
+  In other entries the column is empty. A session's settings and brief files
+  open with the same chevron.
 - **Indents.** The text of an entry starts at the same place on each of its
   lines. What the entry opens to starts there too.
 - **Durations.** An entry's duration is at the right edge of its line. A

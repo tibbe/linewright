@@ -486,7 +486,8 @@ is not in BENCHMARK does not exist.
 - **Address.** `/benchmarks/ID`.
 - **Layout.** The heading at the top, then the benchmark's benchmark runs and
   its tasks, each in a tab of its own.
-- **Heading.** The benchmark's name, with its stage under it.
+- **Heading.** In a [card with icon](components.md#card-with-icon), with the
+  icon `beaker`: the benchmark's name, with its stage under it.
 - **Tabs.** "Runs", then "Tasks". The screen opens on Runs,
   or on Tasks while the benchmark has no benchmark runs. The tabs are daisyUI
   `tabs` in the `tabs-border` style.
@@ -523,7 +524,8 @@ is not in BENCHMARK does not exist.
 
 - **Address.** `/tasks/ID`.
 - **Layout.** The heading at the top, then the task's facts, then its criteria.
-- **Heading.** The task's name, with its stage under it. "Remove" is with the
+- **Heading.** In a [card with icon](components.md#card-with-icon), with the
+  icon `beaker`: the task's name, with its stage under it. "Remove" is with the
   screen's buttons ([Shell](shell.md)), after "Edit"
   ([Editing](ui_patterns.md#editing)).
 - **Facts.** The task's facts are side by side in a row, each with its label
@@ -532,11 +534,12 @@ is not in BENCHMARK does not exist.
   | Fact          | Holds                                                                 |
   | ------------- | --------------------------------------------------------------------- |
   | Captured from | the run it was captured from, linking to its Run                      |
-  | Item          | its item's number and title as at the start, linking to the item on GitHub |
+  | Item          | its item's [item name](components.md#item-name), with the title it had at the start |
   | Started       | when Linewright decided to start the run ([Tasks](#tasks))            |
 
-- **Criteria.** A card titled "Criteria" that holds the whole of the task's
-  criteria. Its icon is `clipboard-document-check`.
+- **Criteria.** A [card with icon](components.md#card-with-icon) titled
+  "Criteria", with the icon `clipboard-document-check`, that holds the whole of
+  the task's criteria.
 - **After "Remove".** The message of what was removed
   ([Confirming](ui_patterns.md#confirming)) is "Removed the task NAME." on
   the benchmark's Tasks.
@@ -599,9 +602,9 @@ is not in BENCHMARK does not exist.
 - **Address.** `/benchmark-runs/ID`.
 - **Layout.** The heading at the top, then the benchmark run's facts, then its
   results ([Results](#results)): the chart, the table and the grid.
-- **Heading.** Benchmark run ID and its state. While the benchmark run is
-  running or waiting, "Cancel" is with the screen's buttons
-  ([Shell](shell.md)).
+- **Heading.** In a [card with icon](components.md#card-with-icon), with the
+  icon `beaker`: Benchmark run ID and its state. While the benchmark run is
+  running or waiting, "Cancel" is with the screen's buttons ([Shell](shell.md)).
 - **State.** The state shows as a status
   ([Status](ui_patterns.md#status)): running as in flight, waiting as
   paused, ended as done and cancelled as cancelled.
@@ -627,19 +630,20 @@ is not in BENCHMARK does not exist.
   left, after "Pass rate vs": "Mean cost" or "Mean time", in a `select`. It
   starts as "Mean cost".
 - **The chart's look.** The chart is a [chart](components.md#chart), in a
-  card whose title is "Pass rate vs" and the choice of the horizontal axis,
-  with the icon `chart-bar`. The chart runs to the left, right and bottom
-  edges of the card.
+  [card with icon](components.md#card-with-icon), with the icon `chart-bar`. The
+  card's title is "Pass rate vs" and the choice of the horizontal axis. The
+  chart runs to the left, right and bottom edges of the card.
 - **A point.** On hover, a point shows its configuration's name, pass rate and
   mean, in a daisyUI `tooltip`. A configuration with no pass rate, or no mean on
   the horizontal axis, has no point. A chart with no points shows "No results".
-- **The table.** "Configurations", with the icon `adjustments-horizontal`: a row
-  for each configuration, highest pass rate first. Configurations with the same
-  pass rate are in the order of the benchmark run. Those with no pass rate are
-  last, in the order of the benchmark run. A configuration's row opens to a row
-  for each task. A task's row opens to a row for each of its trials. Tasks and
-  trials are in the order in which the benchmark run starts them
-  ([Benchmark runs](#benchmark-runs)).
+- **The table.** "Configurations", in a
+  [card with icon](components.md#card-with-icon), with the icon
+  `adjustments-horizontal`: a row for each configuration, highest pass rate
+  first. Configurations with the same pass rate are in the order of the
+  benchmark run. Those with no pass rate are last, in the order of the benchmark
+  run. A configuration's row opens to a row for each task. A task's row opens to
+  a row for each of its trials. Tasks and trials are in the order in which the
+  benchmark run starts them ([Benchmark runs](#benchmark-runs)).
 
   | Column     | For a configuration                         | For a task                                  | For a trial                                                                              |
   | ---------- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -694,11 +698,12 @@ is not in BENCHMARK does not exist.
 - **A trial's transcripts.** A trial's row also opens to the transcripts of its
   run and of its scorer, as Run shows a run's, once each has started. Each is
   under its heading, "Run" or "Scorer".
-- **The grid.** "Passes by task", with the icon `table-cells`, a daisyUI
-  `table`: a row for each task, under the head "Task",
-  and a column for each configuration, in the order of the table. A cell shows
-  the passes of the task under the configuration, such as "2 of 3". A cell also
-  shows its leaks and its trials without a score, if it has any.
+- **The grid.** "Passes by task", a daisyUI `table` in a
+  [card with icon](components.md#card-with-icon), with the icon `table-cells`.
+  It has a row for each task, under the head "Task", and a column for each
+  configuration, in the order of the table. A cell shows the passes of the
+  task under the configuration, such as "2 of 3". A cell also shows its leaks
+  and its trials without a score, if it has any.
 
 ### Remove task
 
