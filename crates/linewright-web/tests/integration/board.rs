@@ -1177,3 +1177,129 @@ async fn a_pull_request_of_linewrights_it_is_not_assigned_to_says_unassigned_on_
 
     assert_eq!(shown, ["In review: Pull 5 #5 | unassigned"]);
 }
+
+/// `docs/specs/board.md`, Cards: a card's `card-title` holds its icon,
+/// then its title and its number, `gap-1` apart, at daisyUI's own gap from
+/// the icon; its line is `gap-1` under its `card-title`, its card status's
+/// icon `gap-1` before it, and a pull request's icon `gap-1` before its
+/// number in it.
+#[test_log::test(tokio::test)]
+async fn a_card_holds_its_icon_title_number_and_line_their_gaps_apart() {
+    let pages = Pages::of(view(
+        vec![
+            assigned(ticket(1, "Do the thing"), &[LINEWRIGHT]),
+            labeled(3, "Ask", &["ready-for-human"]),
+        ],
+        vec![linewrights_pull(2, &[1], &[CheckState::Pending])],
+    ))
+    .await;
+
+    let html = pages.page("/").await;
+
+    for card in select(&html, "#board .card") {
+        let shown = card.html();
+        let body = select_in(card, ".card-body")[0];
+        assert!(has_classes(body, &["gap-1"]), "{shown}");
+        let title = select_in(body, "h3.card-title")[0];
+        assert_eq!(
+            classes_starting_with(title, &["gap-"]),
+            Vec::<&str>::new(),
+            "{shown}"
+        );
+        assert_eq!(
+            parts(title),
+            [
+                "icon issue-opened",
+                "span.flex.gap-1.items-baseline.min-w-0"
+            ],
+            "{shown}"
+        );
+        let name = select_in(title, ":scope > span")[0];
+        assert_eq!(parts(name), ["title", "number"], "{shown}");
+        let number = select_in(name, ":scope > a")[1];
+        assert!(has_classes(number, &["font-normal"]), "{shown}");
+    }
+    let mut lines: Vec<Vec<String>> = select(&html, "#board .card .line")
+        .into_iter()
+        .map(|line| {
+            assert!(has_classes(line, &["flex", "gap-1"]), "{}", line.html());
+            parts(line)
+        })
+        .collect();
+    lines.sort();
+    assert_eq!(
+        lines,
+        [
+            vec!["icon arrow-path".to_string(), "span.".to_string()],
+            vec!["icon hand-raised".to_string(), "span.".to_string()],
+        ]
+    );
+    let pull_request = select(&html, "#board .card .line > span > .inline-flex");
+    assert_eq!(pull_request.len(), 1, "{}", html.html());
+    assert_eq!(parts(pull_request[0]), ["icon git-pull-request", "number"]);
+    assert_no_words_loose_in_a_flex(&html, "#board");
+}
+
+/// `docs/specs/board.md`, Lanes, A lane's head: its icon, title, number
+/// and rest are `gap-1` apart, its number in `font-normal`, and its rest
+/// starts with no space.
+#[test_log::test(tokio::test)]
+async fn a_lane_heads_icon_title_number_and_rest_are_gap_1_apart() {
+    let pages = Pages::of(a_board_with_a_finished_lane()).await;
+
+    let html = pages.page("/").await;
+
+    let mut heads = vec![];
+    for head in select(&html, "#board .lane-head") {
+        let line = select_in(head, ".inline-flex")[0];
+        assert!(
+            has_classes(line, &["gap-1", "items-center"]),
+            "{}",
+            head.html()
+        );
+        let number = select_in(line, ":scope > a[href^='https://github.com/']")[0];
+        assert!(has_classes(number, &["font-normal"]), "{}", head.html());
+        for rest in select_in(line, ":scope > .tail") {
+            let words: String = rest.text().collect();
+            assert!(words.starts_with('—'), "{words:?}");
+        }
+        heads.push(parts(line));
+    }
+    heads.sort();
+    let part = |parts: &[&str]| parts.iter().map(ToString::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        heads,
+        [
+            part(&["icon issue-opened", "title", "number"]),
+            part(&["icon issue-opened", "title", "number", "rest"]),
+            part(&["icon issue-opened", "title", "number", "rest"]),
+            part(&["icon issue-opened", "title", "number", "rest"]),
+        ]
+    );
+    assert_no_words_loose_in_a_flex(&html, "#board");
+}
+
+/// `docs/specs/board.md`, Item, Related items: a related tracking issue
+/// whose lane is finished has its lane head's rest, its tickets closed and
+/// when it finished, after its number.
+#[test_log::test(tokio::test)]
+async fn a_finished_related_tracking_issue_shows_when_it_finished_after_its_number() {
+    let pages = Pages::of(a_board_with_a_finished_lane()).await;
+
+    let html = pages.page("/items/6").await;
+
+    let facts = item_facts(&html);
+    let at = facts
+        .iter()
+        .position(|(label, _)| label == "Tracking issue")
+        .unwrap_or_else(|| panic!("{facts:?}"));
+    let related = select_in(select(&html, "#item dd")[at], ".related-item")[0];
+    assert_eq!(
+        parts(related),
+        ["icon issue-opened", "title", "number", "rest"]
+    );
+    assert_eq!(
+        text(related),
+        "Small thing #5 — 1/1 tickets closed — finished 2026-10-01 09:40:00 UTC"
+    );
+}

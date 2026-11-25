@@ -559,3 +559,24 @@ async fn the_runs_pages_stream_keeps_the_readers_page_number_as_runs_come() {
         "Showing 26–27 of 27 runs"
     );
 }
+
+/// `docs/specs/runs.md`, Runs, The item: the Item column names a read item
+/// by its title, then its number, `gap-1` apart, and one that Linewright
+/// has not read by its number alone, in secondary text.
+#[test_log::test(tokio::test)]
+async fn the_item_column_is_a_title_then_a_number_gap_1_apart_or_a_number_alone_in_secondary_text()
+{
+    let pages = Pages::of(a_ticket()).await;
+    record_interrupted(&pages, 1, 1, "2026-10-01T10:00:00Z").await;
+    record_interrupted(&pages, 9, 1, "2026-10-01T11:00:00Z").await;
+
+    let html = pages.page("/runs").await;
+
+    let cells = select(&html, "#runs tbody td:nth-child(3) > div");
+    assert_eq!(cells.len(), 2, "{}", html.html());
+    let (unread, read) = (cells[0], cells[1]);
+    assert_title_then_number_gap_1_apart(read);
+    assert_eq!(parts(unread), ["number"], "{}", unread.html());
+    assert_in_secondary_text(&html, "#runs tbody td:nth-child(3) > div > a");
+    assert_no_words_loose_in_a_flex(&html, "#runs tbody");
+}

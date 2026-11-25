@@ -283,7 +283,8 @@ pub(super) fn status_icon(status: &Status) -> Icon {
 }
 
 /// The icon of a status, named by the status (`docs/specs/ui_patterns.md`,
-/// Status), in a line of text.
+/// Status), as tall as a line and centred on the first line of a flex
+/// container, even where the words beside it wrap.
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "askama passes a template's values by reference, at any depth"
@@ -297,7 +298,7 @@ pub(super) fn named_status_icon(status: &Status) -> Html {
         Status::Paused => "paused",
         Status::Cancelled => "cancelled",
     };
-    status_icon(status).named(IconSize::Text, name)
+    status_icon(status).drawn(IconSize::Text, Some("self-start h-lh"), Read::Named(name))
 }
 
 /// The icon of a card with icon, which its screen gives it
@@ -371,11 +372,15 @@ pub(super) fn item_kind_svg(kind: &ItemKind) -> Html {
     item_kind_icon(*kind).named(IconSize::Text, kind_name(*kind))
 }
 
-/// The icon of a pull request as [`item_kind_svg`] draws it, `me-1` from
-/// the text after it.
-pub(super) fn pull_request_svg_before_text() -> Html {
+/// The icon of a pull request as [`item_kind_svg`] draws it, centred on
+/// the line of a flex container whose items sit on their baseline.
+pub(super) fn pull_request_svg_in_flex() -> Html {
     let kind = ItemKind::PullRequest;
-    item_kind_icon(kind).drawn(IconSize::Text, Some("me-1"), Read::Named(kind_name(kind)))
+    item_kind_icon(kind).drawn(
+        IconSize::Text,
+        Some("self-center"),
+        Read::Named(kind_name(kind)),
+    )
 }
 
 /// What a screen reader reads of the icon of an item of `kind`.

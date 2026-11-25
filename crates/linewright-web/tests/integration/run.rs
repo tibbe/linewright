@@ -747,6 +747,29 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
     ];
     assert_eq!((row[2].as_str(), &cell_links), ("Ship gh #1", &links));
     assert_eq!(item_line(&html), ("Ship gh #1".to_string(), links));
+    assert_title_then_number_gap_1_apart(select(&html, "#heading .line")[0]);
+    assert_no_words_loose_in_a_flex(&html, "#heading .line");
+}
+
+/// `docs/specs/runs.md`, Run, The heading's item: an item that
+/// Linewright has not read is its number alone, in secondary text.
+#[test_log::test(tokio::test)]
+async fn the_run_page_names_an_item_linewright_does_not_hold_by_its_number_alone() {
+    let pages = Pages::of(a_ticket()).await;
+    record_interrupted(&pages, 9, 1, "2026-10-01T11:00:00Z").await;
+
+    let html = pages.page("/runs/9/triage-1").await;
+
+    assert_eq!(
+        item_line(&html),
+        (
+            "#9".to_string(),
+            vec![format!("https://github.com/{REPO}/issues/9")]
+        )
+    );
+    let line = select(&html, "#heading .line")[0];
+    assert_eq!(parts(line), ["number"], "{}", line.html());
+    assert_in_secondary_text(&html, "#heading .line > a");
 }
 
 /// `docs/specs/runs.md`, Run, Heading, kept up by the page's stream.
@@ -1289,6 +1312,14 @@ async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
         "{:?}",
         entry_lines(&read)
     );
+    assert_eq!(
+        entry_statuses(&read),
+        [(
+            "arrow-path".to_string(),
+            "text-info".to_string(),
+            "running".to_string()
+        )]
+    );
     let lines: Vec<String> = patches(&ended.last().unwrap().1)
         .iter()
         .filter_map(|(_, _, html)| {
@@ -1378,11 +1409,42 @@ async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessi
         lines,
         ["Bash(cargo test) → interrupted", "worked for, interrupted"]
     );
-    let cancelled: Vec<String> = select(&html, "#transcript .tone.badge-neutral")
+    assert_eq!(
+        entry_statuses(&html),
+        [(
+            "no-symbol".to_string(),
+            "text-neutral".to_string(),
+            "interrupted".to_string()
+        )],
+        "only the call is a status: a turn cut short is words alone (Cut short)"
+    );
+    assert!(
+        select(&html, "#transcript .badge").is_empty(),
+        "{}",
+        html.html()
+    );
+}
+
+/// The statuses that `html`'s transcript's entries show
+/// (`docs/specs/components.md`, Transcript, A status in an entry), each as
+/// its icon, its icon's colour and its word.
+fn entry_statuses(html: &Html) -> Vec<(String, String, String)> {
+    select(html, "#transcript .inline-flex:has(> svg.icon)")
         .into_iter()
-        .map(text)
-        .collect();
-    assert_eq!(cancelled, ["interrupted"]);
+        .map(|status| {
+            let icon = select_in(status, ":scope > svg")[0];
+            let colour = icon
+                .value()
+                .classes()
+                .find(|class| class.starts_with("text-"))
+                .unwrap_or_default();
+            (
+                icon.attr("data-icon").unwrap_or_default().to_string(),
+                colour.to_string(),
+                text(select_in(status, ":scope > span")[0]),
+            )
+        })
+        .collect()
 }
 
 /// A Bash call `id` of `command` made `at`.

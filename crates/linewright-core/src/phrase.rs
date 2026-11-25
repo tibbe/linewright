@@ -76,6 +76,21 @@ impl Status {
         }
     }
 
+    /// The class of text in its colour, such as a status's icon beside
+    /// words (`docs/specs/board.md`, Item, Related items, and
+    /// `docs/specs/components.md`, Transcript). Written whole, as `badge`
+    /// says why.
+    pub fn text(self) -> &'static str {
+        match self {
+            Status::Done => "text-success",
+            Status::Failed => "text-error",
+            Status::InFlight => "text-info",
+            Status::Waiting => "text-warning",
+            Status::Cancelled => "text-neutral",
+            Status::Paused => "text-base-content/60",
+        }
+    }
+
     /// The classes of an alert in its colour: neutral, and `base-content/60`
     /// with no content colour, are daisyUI's alert with no colour of its
     /// own. Written whole, as `badge` says why.
@@ -313,6 +328,17 @@ mod tests {
                 "alert alert-warning",
                 "alert",
                 "alert",
+            ]
+        );
+        assert_eq!(
+            statuses.map(Status::text),
+            [
+                "text-success",
+                "text-error",
+                "text-info",
+                "text-warning",
+                "text-neutral",
+                "text-base-content/60",
             ]
         );
     }

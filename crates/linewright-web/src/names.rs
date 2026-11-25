@@ -3,21 +3,10 @@
 //! Waiting for and in what keeps #N out), and in a card's line by number
 //! alone (`docs/specs/board.md`, Cards, Its line).
 
-use askama::Template;
-
 use linewright_core::domain::{ItemKind, Number, Snapshot};
 
 use super::html::{self, Html};
-use super::item_parts::{CardLineNumber, Cut, ItemNumberLink, ItemTitle};
-
-/// An item named in a phrase by its title, wrapping as the phrase does,
-/// then its number.
-#[derive(Template)]
-#[template(source = "<span>{{ title }} {{ number }}</span>", ext = "html")]
-struct TitledItem<'a> {
-    title: ItemTitle<'a>,
-    number: ItemNumberLink<'a>,
-}
+use super::item_parts::{CardLineNumber, InlineItem, ItemNumberLink};
 
 /// How a page names the items of its phrases, in the repo `repo`.
 #[derive(Clone, Copy)]
@@ -40,28 +29,10 @@ impl<'a> Naming<'a> {
     /// `Titled`'s snapshot holds its title.
     pub(crate) fn item(&self, number: Number, kind: ItemKind) -> Html {
         match *self {
-            Naming::CardLine { repo } => html::rendered(&CardLineNumber {
-                number,
-                repo,
-                kind: Some(kind),
-            }),
+            Naming::CardLine { repo } => html::rendered(&CardLineNumber { number, repo, kind }),
             Naming::Titled { repo, .. } => match self.title(number) {
-                Some(title) => {
-                    let title_link = ItemTitle {
-                        number,
-                        title,
-                        cut: Cut::Wrap,
-                    };
-                    html::rendered(&TitledItem {
-                        number: ItemNumberLink::after(&title_link, repo),
-                        title: title_link,
-                    })
-                }
-                None => html::rendered(&CardLineNumber {
-                    number,
-                    repo,
-                    kind: None,
-                }),
+                Some(title) => html::rendered(&InlineItem::of(number, title, repo)),
+                None => html::rendered(&ItemNumberLink::alone(number, repo)),
             },
         }
     }

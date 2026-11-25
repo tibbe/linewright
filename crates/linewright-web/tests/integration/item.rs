@@ -1,4 +1,6 @@
-use linewright_core::domain::{Check, CheckState, Issue, Linked, Number, Parent, Pull, label};
+use linewright_core::domain::{
+    Check, CheckState, Filed, Issue, Linked, Login, Number, Parent, Pull, label,
+};
 use serde_json::json;
 
 use super::*;
@@ -495,7 +497,7 @@ fn a_lane() -> linewright_core::status::View {
                 ..ticket(2, "Big thing")
             }),
             Issue {
-                author: linewright_core::domain::Login::new(LINEWRIGHT),
+                author: Login::new(LINEWRIGHT),
                 parent: Some(Parent {
                     number: Number(2),
                     spec_change: None,
@@ -670,5 +672,234 @@ async fn the_item_pages_stream_names_a_blocker_by_its_item_name() {
     assert_eq!(
         fact(&item, "Waiting for"),
         "Fix the parser #2, which blocks it"
+    );
+}
+
+/// The value of the fact labeled `label` on `html`'s item page.
+fn fact_value<'a>(html: &'a Html, label: &str) -> ElementRef<'a> {
+    let at = item_facts(html)
+        .iter()
+        .position(|(shown, _)| shown == label)
+        .unwrap_or_else(|| panic!("no {label}"));
+    select(html, "#item dd")[at]
+}
+
+/// `docs/specs/board.md`, Item, Heading: the heading's `card-title`
+/// holds, after its icon, #N's title, then its number in `font-normal`, at
+/// the `card-title`'s own gap.
+#[test_log::test(tokio::test)]
+async fn the_item_pages_heading_holds_its_icon_title_and_number_in_its_card_title() {
+    let pages = Pages::of(for_the_maintainer()).await;
+
+    let html = pages.page("/items/1").await;
+
+    let h1 = select(&html, "#heading h1.card-title")[0];
+    assert_eq!(parts(h1), ["icon issue-opened", "title", "number"]);
+    assert_eq!(classes_starting_with(h1, &["gap-"]), Vec::<&str>::new());
+    let number = select_in(h1, ":scope > a[href^='https://github.com/']")[0];
+    assert!(
+        has_classes(number, &["font-normal", "text-base-content/60"]),
+        "{}",
+        number.html()
+    );
+    assert_no_words_loose_in_a_flex(&html, "#item, #heading");
+}
+
+/// `docs/specs/board.md`, Item, Related items: a related item is one line
+/// of its icon, its status icon in its card status's colour, its title and
+/// its number, `gap-1` apart, the number in the weight of the text around
+/// it; and one that Linewright has not read is its number alone, in
+/// secondary text.
+#[test_log::test(tokio::test)]
+async fn a_related_item_is_its_icon_status_icon_title_and_number_gap_1_apart() {
+    let pull = Pull {
+        title: "First try".into(),
+        checks: vec![Check {
+            name: "test".into(),
+            state: CheckState::Pending,
+        }],
+        ..open_pull(2, LINEWRIGHT, &[1], &[LINEWRIGHT])
+    };
+    let for_a_spec_change = Issue {
+        author: Login::new(LINEWRIGHT),
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(9),
+        }),
+        ..ticket(1, "Do the thing")
+    };
+    let pages = Pages::of(view(
+        vec![
+            for_a_spec_change,
+            labeled(3, "Part one", &["ready-for-agent"]),
+        ],
+        vec![pull],
+    ))
+    .await;
+
+    let item = pages.page("/items/1").await;
+
+    let line = select_in(fact_value(&item, "Pull requests"), ".flex-wrap")[0];
+    assert!(
+        has_classes(line, &["flex", "justify-end", "gap-4"]),
+        "{}",
+        line.html()
+    );
+    let related = select_in(line, ":scope > .related-item")[0];
+    assert!(
+        has_classes(related, &["inline-flex", "items-center", "gap-1"]),
+        "{}",
+        related.html()
+    );
+    assert_eq!(
+        parts(related),
+        [
+            "icon git-pull-request",
+            "icon arrow-path",
+            "title",
+            "number"
+        ]
+    );
+    let status = select_in(related, ":scope > svg")[1];
+    assert!(has_classes(status, &["text-info"]), "{}", related.html());
+    let number = select_in(related, ":scope > a")[1];
+    assert!(
+        has_classes(number, &["text-base-content/60"]) && lacks_classes(number, &["font-normal"]),
+        "{}",
+        related.html()
+    );
+
+    let unread = select_in(
+        fact_value(&item, "Spec change"),
+        ".flex-wrap > .related-item",
+    )[0];
+    assert_eq!(parts(unread), ["number"], "{}", unread.html());
+    assert_eq!(text(unread), "#9");
+    assert_in_secondary_text(
+        &item,
+        "#item .related-item > a[href^='https://github.com/']",
+    );
+
+    let unchecked = Pull {
+        title: "First try".into(),
+        ..open_pull(2, LINEWRIGHT, &[1], &[LINEWRIGHT])
+    };
+    let quiet = Pages::of(view(vec![ticket(1, "Do the thing")], vec![unchecked])).await;
+    let quiet = quiet.page("/items/1").await;
+    let statusless = select_in(fact_value(&quiet, "Pull requests"), ".related-item")[0];
+    assert_eq!(
+        parts(statusless),
+        ["icon git-pull-request", "title", "number"],
+        "an item whose card shows no card status has no status icon"
+    );
+    assert_no_words_loose_in_a_flex(&item, "#item, #heading");
+    assert_no_words_loose_in_a_flex(&quiet, "#item, #heading");
+}
+
+/// `docs/specs/board.md`, Item, Related items: a related tracking issue
+/// is a related item with the rest of its lane head `gap-1` after its
+/// number, not in the lane head's weight.
+#[test_log::test(tokio::test)]
+async fn a_related_tracking_issue_has_the_rest_of_its_lane_head_after_its_number() {
+    let pages = Pages::of(a_lane()).await;
+
+    let html = pages.page("/items/3").await;
+
+    let value = fact_value(&html, "Tracking issue");
+    let related = select_in(value, ".related-item")[0];
+    assert!(has_classes(related, &["gap-1"]), "{}", related.html());
+    assert_eq!(
+        parts(related),
+        ["icon issue-opened", "title", "number", "rest"]
+    );
+    assert_eq!(text(related), "Big thing #2 — 0/1 tickets closed");
+    for element in std::iter::once(value).chain(select_in(value, "*")) {
+        assert!(
+            lacks_classes(element, &["font-semibold", "font-normal"]),
+            "{}",
+            value.html()
+        );
+    }
+}
+
+/// `docs/specs/board.md`, Item, Items in Waiting for and in what keeps #N
+/// out: an item is its title, then its number, `gap-1` apart, and one
+/// that Linewright has not read is its number alone, in secondary text.
+#[test_log::test(tokio::test)]
+async fn an_item_waited_for_is_its_title_then_its_number_gap_1_apart() {
+    let pages = Pages::of(blocked(true)).await;
+
+    let html = pages.page("/items/3").await;
+
+    let waits = fact_value(&html, "Waiting for");
+    let lines = select_in(waits, ":scope > div");
+    let titled = select_in(lines[0], ":scope > .inline-flex")[0];
+    assert!(
+        has_classes(titled, &["gap-1", "items-baseline"]),
+        "{}",
+        titled.html()
+    );
+    assert_eq!(parts(titled), ["title", "number"]);
+    let unread = select_in(lines[1], ":scope > *")[0];
+    assert_eq!(parts(lines[1])[0], "number", "{}", lines[1].html());
+    for number in [select_in(titled, ":scope > a")[1], unread] {
+        assert!(
+            has_classes(number, &["text-base-content/60"])
+                && lacks_classes(number, &["font-normal"]),
+            "{}",
+            number.html()
+        );
+    }
+    assert_no_words_loose_in_a_flex(&html, "#item, #heading");
+}
+
+/// `docs/specs/components.md`, Facts: a status among facts is its dot, its
+/// icon and its words, `gap-1` apart.
+#[test_log::test(tokio::test)]
+async fn a_status_among_facts_is_its_dot_icon_and_words_gap_1_apart() {
+    let pages = Pages::of(for_the_maintainer()).await;
+
+    let html = pages.page("/items/1").await;
+
+    let status = select(&html, "#item .status-text")[0];
+    assert!(
+        has_classes(status, &["inline-flex", "gap-1"]),
+        "{}",
+        status.html()
+    );
+    assert_eq!(parts(status)[1..], ["icon hand-raised", "span."]);
+    let icon = select_in(status, ":scope > svg")[0];
+    assert!(
+        has_classes(status, &["items-baseline"]) && has_classes(icon, &["self-start", "h-lh"]),
+        "the words sit on the line's baseline, and the icon is centred on their first line (`docs/specs/design_system.md`, Icons, Alignment): {}",
+        status.html()
+    );
+}
+
+/// `docs/specs/board.md`, Item, Related items: the items that one fact
+/// lists are `gap-4` apart.
+#[test_log::test(tokio::test)]
+async fn the_items_one_fact_lists_are_gap_4_apart() {
+    let pull = |number, title: &str| Pull {
+        title: title.into(),
+        ..open_pull(number, LINEWRIGHT, &[1], &[LINEWRIGHT])
+    };
+    let pages = Pages::of(view(
+        vec![ticket(1, "Do the thing")],
+        vec![pull(2, "First try"), pull(3, "Second try")],
+    ))
+    .await;
+
+    let html = pages.page("/items/1").await;
+
+    let lines = select_in(fact_value(&html, "Pull requests"), ":scope > div");
+    assert_eq!(lines.len(), 1, "{}", lines[0].html());
+    let items = select_in(lines[0], ":scope > .flex-wrap")[0];
+    assert!(has_classes(items, &["gap-4"]), "{}", items.html());
+    assert_eq!(
+        select_in(items, ":scope > .related-item")
+            .into_iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["First try #2", "Second try #3"]
     );
 }
