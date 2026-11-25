@@ -184,18 +184,22 @@ The session ends with a result that matches
 ### Automations
 
 - **Address.** `/automations`.
-- **Layout.** Each automation file that does not parse, then a row per
-  automation.
-- **A file that does not parse** shows as failed
-  ([Status](ui_patterns.md#status)), and reads "`FILE` does not parse:
-  ERROR", where FILE is its name and ERROR is what the parser gives. It is
-  drawn as a notice is ([Shell](shell.md)), without a link.
+- **Layout.** Each automation file that does not parse, then the table of
+  automations.
+- **A file that does not parse.** A [notice](components.md#notice) that shows
+  as failed ([Status](design_system.md#status)), without a link:
+  - Text: "`FILE` does not parse: ERROR", where FILE is its name and ERROR is
+    what the parser gives.
+- **The automations.** A [table](components.md#table):
+  - Name: "Automations", which the screen does not show.
+  - Columns: those of the table below, each aligned left.
+  - Rows: a row per automation.
 
 | Column     | Holds                                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------------------ |
 | Automation | the automation's name                                                                                  |
 | Trigger    | when it runs, in words                                                                                 |
-| Last run   | its last run, with its outcome, linking to its Run; or, before its first, when Linewright first saw it |
+| Last run   | its last run, linking to its Run, with the [status badge](components.md#status-badge) of its outcome; or, before its first, when Linewright first saw it |
 | Next run   | when it runs next; nothing for an automation not on a schedule                                         |
 
 ## Out of scope
