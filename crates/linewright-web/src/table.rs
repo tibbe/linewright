@@ -1,30 +1,14 @@
 //! A table in its card (`docs/specs/components.md`, Table), which the
 //! `table_card` macro draws.
 
-/// What a column holds, as far as it decides how the column aligns.
-#[derive(Clone, Copy)]
-pub(super) enum Column {
-    Money,
-    Duration,
-    Other,
-}
-
-/// How a column's head and cells align.
+/// How a column's head and cells align (`docs/specs/components.md`, Table,
+/// Columns).
 pub(super) enum Align {
     Start,
     End,
 }
 
 impl Align {
-    /// Amounts of money and durations align right, every other column
-    /// left.
-    pub(super) fn of(column: Column) -> Align {
-        match column {
-            Column::Money | Column::Duration => Align::End,
-            Column::Other => Align::Start,
-        }
-    }
-
     /// The class that aligns a head or a cell so.
     pub(super) fn class(&self) -> &'static str {
         match self {

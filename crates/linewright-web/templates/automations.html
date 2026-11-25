@@ -17,18 +17,18 @@
 {%- else %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
-<thead><tr>{% for column in AutomationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in AutomationsColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in automations.rows %}
 <tr>
 {%- for column in AutomationsColumn::ALL %}
 {%- match column %}
 {%- when AutomationsColumn::Name %}
-<th class="{{ column.align() }}">{{ row.name }}</th>
+<th class="{{ column.align().class() }}">{{ row.name }}</th>
 {%- when AutomationsColumn::Trigger %}
-<td class="{{ column.align() }}">{{ row.trigger }}</td>
+<td class="{{ column.align().class() }}">{{ row.trigger }}</td>
 {%- when AutomationsColumn::LastRun %}
-<td class="{{ column.align() }}">
+<td class="{{ column.align().class() }}">
 {%- match row.last_run -%}
 {%- when LastRunShown::Run { id, href, status, word, about } -%}
 <a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {{ crate::components::StatusBadge::of(status, word) }}
@@ -37,7 +37,7 @@
 {%- endmatch -%}
 </td>
 {%- when AutomationsColumn::NextRun %}
-<td class="{{ column.align() }}">{%- if let Some(next_run) = row.next_run %}{{ next_run|safe }}{%- endif %}</td>
+<td class="{{ column.align().class() }}">{%- if let Some(next_run) = row.next_run %}{{ next_run|safe }}{%- endif %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>

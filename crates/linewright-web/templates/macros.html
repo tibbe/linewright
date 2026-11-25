@@ -373,12 +373,12 @@ card {% call card_surface(colour) %}{% endcall %}
 {%- when crate::runs_table::RunsShown::Table(table) %}
 <div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
-<thead><tr>{% for column in table.columns() %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in table.columns() %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for (item, row) in table.rows() %}
 <tr>
 {%- for column in table.columns() %}
-<td class="{{ column.align() }}">
+<td class="{{ column.align().class() }}">
 {%- match column -%}
 {%- when crate::runs_table::RunsColumn::Outcome -%}
 {{ crate::components::StatusBadge::of(row.status, row.word) }}

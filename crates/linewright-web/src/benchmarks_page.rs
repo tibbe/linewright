@@ -28,7 +28,7 @@ use super::html::{self, Html};
 use super::making::{self, Answer, Field, FieldRefusals, Form, MadeShown, Making, Refusal};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
-use super::table::{Align, Column, View};
+use super::table::{Align, View};
 use super::write::Write;
 use super::{Page, benchmark_path, benchmark_run_path, events, given, render, with_filters};
 
@@ -172,15 +172,14 @@ impl BenchmarksColumn {
         }
     }
 
-    /// The class that aligns the column's head and cells as its kind does.
-    fn align(self) -> &'static str {
-        let column = match self {
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
             BenchmarksColumn::Name
             | BenchmarksColumn::Stage
             | BenchmarksColumn::LastBenchmarkRun
-            | BenchmarksColumn::View => Column::Other,
-        };
-        Align::of(column).class()
+            | BenchmarksColumn::View => Align::Start,
+        }
     }
 }
 

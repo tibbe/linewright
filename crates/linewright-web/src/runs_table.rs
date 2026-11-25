@@ -11,7 +11,7 @@ use super::html::{self, Html};
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_path;
-use super::table::{Align, Column, View};
+use super::table::{Align, View};
 
 /// A list of runs, ready for a page, or why there is none.
 pub(super) enum RunsShown {
@@ -73,18 +73,17 @@ impl RunsColumn {
         }
     }
 
-    /// The class that aligns the column's head and cells as its kind does.
-    pub(super) fn align(self) -> &'static str {
-        let column = match self {
-            RunsColumn::Duration => Column::Duration,
+    /// How the column's head and cells align.
+    pub(super) fn align(self) -> Align {
+        match self {
+            RunsColumn::Duration => Align::End,
             RunsColumn::Outcome
             | RunsColumn::Run
             | RunsColumn::Item
             | RunsColumn::Stage
             | RunsColumn::Started
-            | RunsColumn::View => Column::Other,
-        };
-        Align::of(column).class()
+            | RunsColumn::View => Align::Start,
+        }
     }
 }
 

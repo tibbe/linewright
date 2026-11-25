@@ -22,6 +22,7 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Frame, Navigation, Place};
+use super::table::Align;
 use super::write::{Refused, Write};
 use super::{ErrorPage, Page, events, render, with_filters};
 
@@ -36,8 +37,47 @@ const SAID: &str = "authorizations-said";
 /// each authorization.
 const DIALOGS: &str = "authorizations-dialogs";
 
-/// The heads of the table's columns, the last over the rows' buttons.
-const HEADS: [&str; 5] = ["Client", "Sends back to", "Allowed", "Ends", ""];
+/// A column of the table of authorizations, the first naming each row.
+#[derive(Clone, Copy)]
+enum AuthorizationsColumn {
+    Client,
+    SendsBackTo,
+    Allowed,
+    Ends,
+    /// A row's buttons, with an empty head.
+    Buttons,
+}
+
+impl AuthorizationsColumn {
+    const ALL: [AuthorizationsColumn; 5] = [
+        AuthorizationsColumn::Client,
+        AuthorizationsColumn::SendsBackTo,
+        AuthorizationsColumn::Allowed,
+        AuthorizationsColumn::Ends,
+        AuthorizationsColumn::Buttons,
+    ];
+
+    fn head(self) -> &'static str {
+        match self {
+            AuthorizationsColumn::Client => "Client",
+            AuthorizationsColumn::SendsBackTo => "Sends back to",
+            AuthorizationsColumn::Allowed => "Allowed",
+            AuthorizationsColumn::Ends => "Ends",
+            AuthorizationsColumn::Buttons => "",
+        }
+    }
+
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
+            AuthorizationsColumn::Client
+            | AuthorizationsColumn::SendsBackTo
+            | AuthorizationsColumn::Allowed
+            | AuthorizationsColumn::Ends
+            | AuthorizationsColumn::Buttons => Align::Start,
+        }
+    }
+}
 
 /// The authorizations, ready for the page: a page of their rows, with the
 /// pages under them.

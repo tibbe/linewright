@@ -19,7 +19,7 @@ use super::html::{self, Html};
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
-use super::table::{Align, Column};
+use super::table::Align;
 use super::{ErrorPage, Page, events, render, run_path, with_filters};
 
 /// The automations, ready for the page: a page of their rows, with the pages
@@ -64,15 +64,14 @@ impl AutomationsColumn {
         }
     }
 
-    /// The class that aligns the column's head and cells as its kind does.
-    fn align(self) -> &'static str {
-        let column = match self {
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
             AutomationsColumn::Name
             | AutomationsColumn::Trigger
             | AutomationsColumn::LastRun
-            | AutomationsColumn::NextRun => Column::Other,
-        };
-        Align::of(column).class()
+            | AutomationsColumn::NextRun => Align::Start,
+        }
     }
 }
 

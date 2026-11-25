@@ -40,7 +40,7 @@ use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_page::{PageOf, RunQuery, Transcribed, transcript_events, transcript_page};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing, Within};
 use super::stats::{ABSENT, Stat, absent};
-use super::table::{Align, Column, Fold};
+use super::table::{Align, Fold};
 use super::write::{Refused, Write, alert};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, events, nothing_there, render,
@@ -406,17 +406,18 @@ impl ConfigurationsColumn {
         }
     }
 
-    fn align(self) -> &'static str {
-        Align::of(match self {
-            ConfigurationsColumn::MeanCost | ConfigurationsColumn::TotalCost => Column::Money,
-            ConfigurationsColumn::MeanTime | ConfigurationsColumn::TotalTime => Column::Duration,
+    fn align(self) -> Align {
+        match self {
+            ConfigurationsColumn::MeanCost
+            | ConfigurationsColumn::TotalCost
+            | ConfigurationsColumn::MeanTime
+            | ConfigurationsColumn::TotalTime => Align::End,
             ConfigurationsColumn::Name
             | ConfigurationsColumn::PassRate
             | ConfigurationsColumn::Leaks
             | ConfigurationsColumn::Unscored
-            | ConfigurationsColumn::Edit => Column::Other,
-        })
-        .class()
+            | ConfigurationsColumn::Edit => Align::Start,
+        }
     }
 }
 
@@ -650,6 +651,23 @@ fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
             mean_ticks,
             points,
         }),
+    }
+}
+
+/// A column of the grid, the first naming each row.
+#[derive(Clone, Copy)]
+enum GridColumn {
+    Task,
+    /// One for each configuration.
+    Configuration,
+}
+
+impl GridColumn {
+    /// How the column's head and cells align.
+    fn align(self) -> Align {
+        match self {
+            GridColumn::Task | GridColumn::Configuration => Align::Start,
+        }
     }
 }
 

@@ -5,26 +5,26 @@
 {%- else %}
 <div class="overflow-x-auto">
 <table class="table">
-<thead><tr>{% for column in BenchmarkRunsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in BenchmarkRunsColumn::ALL %}<th class="{{ column.align().class() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for benchmark_run in benchmark_runs %}
 <tr>
 {%- for column in BenchmarkRunsColumn::ALL %}
 {%- match column %}
 {%- when BenchmarkRunsColumn::Launched %}
-<th class="{{ column.align() }}">{{ benchmark_run.launched }}</th>
+<th class="{{ column.align().class() }}">{{ benchmark_run.launched }}</th>
 {%- when BenchmarkRunsColumn::State %}
-<td class="{{ column.align() }}">{{ crate::components::StatusBadge::of(benchmark_run.status, benchmark_run.state) }}</td>
+<td class="{{ column.align().class() }}">{{ crate::components::StatusBadge::of(benchmark_run.status, benchmark_run.state) }}</td>
 {%- when BenchmarkRunsColumn::Tasks %}
-<td class="{{ column.align() }}">{{ benchmark_run.tasks }}</td>
+<td class="{{ column.align().class() }}">{{ benchmark_run.tasks }}</td>
 {%- when BenchmarkRunsColumn::Configurations %}
-<td class="{{ column.align() }}">{{ benchmark_run.configurations }}</td>
+<td class="{{ column.align().class() }}">{{ benchmark_run.configurations }}</td>
 {%- when BenchmarkRunsColumn::Duration %}
-<td class="{{ column.align() }} whitespace-nowrap">{% match benchmark_run.duration %}{% when Some(duration) %}{{ duration }}{% when None %}–{% endmatch %}</td>
+<td class="{{ column.align().class() }} whitespace-nowrap">{% match benchmark_run.duration %}{% when Some(duration) %}{{ duration }}{% when None %}–{% endmatch %}</td>
 {%- when BenchmarkRunsColumn::Cost %}
-<td class="{{ column.align() }} whitespace-nowrap">{{ benchmark_run.cost }}</td>
+<td class="{{ column.align().class() }} whitespace-nowrap">{{ benchmark_run.cost }}</td>
 {%- when BenchmarkRunsColumn::View %}
-<td class="{{ column.align() }}">{% call ui::row_view(benchmark_run.view) %}{% endcall %}</td>
+<td class="{{ column.align().class() }}">{% call ui::row_view(benchmark_run.view) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>
