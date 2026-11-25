@@ -21,12 +21,12 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use crate::automation::AutomationName;
+use crate::automation::{AutomationListing, AutomationName};
 use crate::benchmark_runs::runner::BenchmarkRunsShown;
 use crate::benchmarks::{BenchmarkRunId, BenchmarkRuns, Shown};
 use crate::board::{self, Board};
 use crate::briefs::Briefs;
-use crate::by_hand::{HandRefusal, HandTaken};
+use crate::by_hand::{self, HandRefusal, HandTaken};
 use crate::clock::Clock;
 use crate::domain::{Number, Snapshot, Timestamp};
 use crate::drain::{Asked, Exiting, Stop, Taken, Was};
@@ -776,7 +776,8 @@ async fn take_rebuild(State(sources): State<Sources>) -> Response {
 
 /// Answers once `serve` has taken the request by hand for the automation
 /// `name`, with a conflict when it refused it, an unknown automation
-/// included, and a bad request when `name` is no automation's name.
+/// included, and a bad request when `name` is no automation's name. Before
+/// the first poll has ended it refuses at once.
 async fn take_run_by_hand(
     State(sources): State<Sources>,
     Resource(name): Resource<String>,
@@ -785,6 +786,12 @@ async fn take_run_by_hand(
         Ok(name) => name,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, &e),
     };
+    if sources.polling.borrow().is_none() {
+        let draining = sources.ends.draining().is_cancelled();
+        if let Err(refusal) = by_hand::take(&name, draining, &AutomationListing::NotYet) {
+            return error_response(StatusCode::CONFLICT, &refusal.to_string());
+        }
+    }
     match sources.automations.ask(name).await {
         Some(Err(refusal)) => error_response(StatusCode::CONFLICT, &refusal.to_string()),
         Some(Ok(taken)) => json_response(StatusCode::OK, &taken),

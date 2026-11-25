@@ -526,9 +526,8 @@ pub enum HandWait {
     RunInFlight(RunId),
     /// Room under `max-runs`.
     Room,
-    /// The next poll that lists the automations: the reconcile that took
-    /// the request did not decide its run, such as when it failed or when
-    /// the last poll could not list them.
+    /// The next poll: the reconcile that took the request did not decide
+    /// its run, such as when it failed.
     NextPoll,
 }
 

@@ -80,6 +80,8 @@ struct State {
     items_unreadable: Option<String>,
     /// Fails [`Store::record_items`].
     unrecordable: Option<String>,
+    /// Fails the listing of each directory it holds, with its reason.
+    unlistable: BTreeMap<String, String>,
     before_recording: Option<Box<dyn FnOnce() + Send>>,
     pushes_refused: Option<PushRefusal>,
     /// Each push's branch and the commit it pushed, in order.
@@ -390,6 +392,7 @@ impl LocalStore {
                 unreadable: None,
                 items_unreadable: None,
                 unrecordable: None,
+                unlistable: BTreeMap::new(),
                 before_recording: None,
                 pushes_refused: None,
                 pushed: vec![],
@@ -1046,6 +1049,16 @@ impl LocalStore {
     /// Fails each read of items as GitHub's REST API gives them.
     pub fn fail_recording(&self, reason: &str) {
         self.state().unrecordable = Some(reason.into());
+    }
+
+    /// Fails each listing of the files under `dir`, saying `reason`, until
+    /// [`LocalStore::restore_listing`].
+    pub fn fail_listing(&self, dir: &str, reason: &str) {
+        self.state().unlistable.insert(dir.into(), reason.into());
+    }
+
+    pub fn restore_listing(&self, dir: &str) {
+        self.state().unlistable.remove(dir);
     }
 
     /// Keeps `attempt` as a completed attempt of a workflow run of the
@@ -2633,6 +2646,9 @@ impl Store for LocalStore {
     }
 
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
+        if let Some(reason) = self.state().unlistable.get(dir) {
+            bail!("{reason}");
+        }
         let repository = self.repository();
         // Each entry is `<mode> <type> <object>\t<name>`
         // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
