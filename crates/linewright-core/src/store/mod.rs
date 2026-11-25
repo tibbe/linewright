@@ -627,9 +627,14 @@ pub trait Store: Send + Sync {
     async fn edit_body(&self, number: Number, body: &str) -> Result<()>;
     async fn close_issue(&self, issue: Number, reason: IssueCloseReason) -> Result<()>;
     async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()>;
+    /// Adds issue #`child` to #`parent`'s sub-issues, leaving both issues'
+    /// time of last update where it was.
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
-    /// Removes issue #`child` from #`parent`'s sub-issues.
+    /// Removes issue #`child` from #`parent`'s sub-issues, leaving both
+    /// issues' time of last update where it was.
     async fn remove_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
+    /// Records that #`issue` is blocked by #`blocker`, leaving both issues'
+    /// time of last update where it was.
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()>;
 
     /// Opens a draft pull request into the default branch.

@@ -534,11 +534,10 @@ impl LocalStore {
         Ok(())
     }
 
-    /// `actor` adds issue #`child` to #`parent`'s sub-issues.
+    /// `actor` adds issue #`child` to #`parent`'s sub-issues, which moves
+    /// neither issue's time of last update.
     pub fn add_sub_issue_as(&self, actor: &str, parent: Number, child: Number) -> Result<()> {
-        let now = self.now();
-        self.state()
-            .add_sub_issue(parent, child, Login::new(actor), now)
+        self.state().add_sub_issue(parent, child, Login::new(actor))
     }
 
     /// `actor` labels the issue or pull request #`number` `label`.
@@ -1463,6 +1462,14 @@ impl State {
             .with_context(|| format!("no issue {number}"))
     }
 
+    /// The issue #`number`, with its time of last update left where it
+    /// was.
+    fn issue_mut(&mut self, number: Number) -> Result<&mut IssueRecord> {
+        self.issues
+            .get_mut(&number)
+            .with_context(|| format!("no issue {number}"))
+    }
+
     /// The pull request #`number`, written to at `now`, as
     /// [`State::issue_written`].
     fn pull_written(&mut self, number: Number, now: Timestamp) -> Result<&mut PullRecord> {
@@ -1790,19 +1797,15 @@ impl State {
         Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
     }
 
-    fn add_sub_issue(
-        &mut self,
-        parent: Number,
-        child: Number,
-        by: Login,
-        now: Timestamp,
-    ) -> Result<()> {
-        self.issue_written(child, now)?;
+    /// `by` adds #`child` to #`parent`'s sub-issues, which moves neither
+    /// issue's time of last update.
+    fn add_sub_issue(&mut self, parent: Number, child: Number, by: Login) -> Result<()> {
+        self.issue_mut(child)?;
         let added = Added {
             number: child,
             by: Some(by),
         };
-        self.issue_written(parent, now)?.sub_issues.push(added);
+        self.issue_mut(parent)?.sub_issues.push(added);
         Ok(())
     }
 
@@ -2915,30 +2918,27 @@ impl Store for LocalStore {
     }
 
     async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
-        let now = self.now();
         let mut state = self.state();
         let linewright = state.linewright.clone();
-        state.add_sub_issue(parent, child, linewright, now)
+        state.add_sub_issue(parent, child, linewright)
     }
 
     async fn remove_sub_issue(&self, parent: Number, child: Number) -> Result<()> {
-        let now = self.now();
         let mut state = self.state();
-        let record = state.issue_written(parent, now)?;
+        state.issue_mut(child)?;
+        let record = state.issue_mut(parent)?;
         let before = record.sub_issues.len();
         record.sub_issues.retain(|added| added.number != child);
         if record.sub_issues.len() == before {
             bail!("#{child} is not a sub-issue of #{parent}");
         }
-        state.issue_written(child, now)?;
         Ok(())
     }
 
     async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()> {
-        let now = self.now();
         let mut state = self.state();
-        state.issue_written(blocker, now)?;
-        state.issue_written(issue, now)?.blocked_by.push(blocker);
+        state.issue_mut(blocker)?;
+        state.issue_mut(issue)?.blocked_by.push(blocker);
         Ok(())
     }
 

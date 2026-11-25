@@ -245,6 +245,25 @@ impl Sandbox {
         within(self.lag, Duration::from_secs(1), check).await
     }
 
+    /// Succeeds once `check` has answered without failing at every try,
+    /// asked again on GitHub each second until [`GITHUB_LAG`] has passed and
+    /// once on the local store, and fails with its error at the first try
+    /// that fails.
+    pub async fn throughout<F, Fut>(&self, mut check: F) -> Result<()>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let until = Instant::now() + self.lag;
+        loop {
+            check().await?;
+            if Instant::now() >= until {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
     /// When a snapshot says #`number` was last updated, open or closed.
     pub async fn updated_at(&self, number: Number) -> Result<Timestamp> {
         let snapshot = self.store().snapshot(recent(), &Scope::default()).await?;
