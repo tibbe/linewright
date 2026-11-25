@@ -353,7 +353,9 @@ async fn only_the_cards_their_screens_give_an_icon_have_one() {
 
 /// `docs/specs/design_system.md`, Buttons, Icons: each button the table names
 /// has its icon before its label. A "Cancel" that cancels work opens its
-/// confirmation, and one that closes a dialog closes it.
+/// confirmation, and one that closes a dialog closes it. "Keep running" turns
+/// down Cancel benchmark run (`docs/specs/benchmarks.md`), so it is the button
+/// that backs out of its dialog.
 #[test_log::test(tokio::test)]
 async fn each_button_has_its_icon_before_its_label() {
     let pages = with_a_run().await;
@@ -386,7 +388,7 @@ async fn each_button_has_its_icon_before_its_label() {
         ("Create", "plus"),
         ("Run benchmark", "play"),
         ("Add a configuration", "plus"),
-        ("Keep running", "play"),
+        ("Keep running", "x-mark"),
         ("Edit", "pencil-square"),
         ("Save", "check"),
         ("Cancel that closes a dialog", "x-mark"),
