@@ -261,7 +261,11 @@ pub enum LaneHead {
     },
     /// An item worked as one, the lane's one card: an issue, or a pull
     /// request that closes no issue with a card.
-    Item { number: Number, title: String },
+    Item {
+        number: Number,
+        title: String,
+        pull_request: bool,
+    },
 }
 
 /// What a lane's head shows (`docs/specs/board.md`, Lanes, A lane and
@@ -606,6 +610,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
                 let mut lane = Gathering::of(LaneHead::Item {
                     number: card.number,
                     title: card.title.clone(),
+                    pull_request: card.pull_request,
                 });
                 lane.columns[column as usize].push(card);
                 lanes.push(lane);

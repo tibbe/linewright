@@ -768,7 +768,8 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
         [
             LaneHead::Item {
                 number: Number(2),
-                title: "Ticket 2".into()
+                title: "Ticket 2".into(),
+                pull_request: false,
             },
             LaneHead::Tracking {
                 number: Number(10),
@@ -1164,11 +1165,13 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
         [
             LaneHead::Item {
                 number: Number(30),
-                title: "Tidy up".into()
+                title: "Tidy up".into(),
+                pull_request: true,
             },
             LaneHead::Item {
                 number: Number(2),
-                title: "Standalone".into()
+                title: "Standalone".into(),
+                pull_request: false,
             },
         ]
     );

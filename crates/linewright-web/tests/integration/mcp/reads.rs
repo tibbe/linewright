@@ -21,6 +21,7 @@ async fn get_board_returns_the_board_its_screen_shows() {
             "lanes": [{
                 "number": 1,
                 "title": "Do the thing",
+                "pull_request": false,
                 "cards": [{
                     "number": 1,
                     "title": "Do the thing",
