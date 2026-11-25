@@ -134,7 +134,7 @@
   }
 
   a.github > svg.icon {
-    @apply ms-[0.15em] inline-block align-[-0.125em];
+    @apply ms-[0.15em];
   }
 
   .name-cut-1,
@@ -180,7 +180,7 @@
   }
 
   .name-cut-2 > svg {
-    @apply mt-[calc((1lh-1rem)/2)] mr-[0.25em];
+    @apply mt-[calc((1lh-1em)/2)] mr-[0.25em];
   }
 
   .board .card.toned {
@@ -188,7 +188,7 @@
   }
 
   :is(.board .toned .line, .related-item, .status-text) > svg.icon {
-    @apply mr-1 inline-block align-[-0.125em];
+    @apply mr-1;
   }
 
   .status-text > .status {

@@ -1,9 +1,3 @@
-{#- A status as a daisyUI badge in its colour, holding its icon and its
-    words, so that it is never told by colour alone. -#}
-{%- macro status(status, word) -%}
-<span class="tone badge badge-sm {{ status.badge() }}">{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
-{%- endmacro -%}
-
 {#- A status among a page's facts (`docs/specs/components.md`, Facts):
     a daisyUI `status` dot in its colour, then its icon, named by the status,
     and its words. -#}
@@ -31,7 +25,7 @@
 {%- when crate::facts::Piece::Status { status, words } -%}
 {% call status_text(status, words) %}{% endcall %}
 {%- when crate::facts::Piece::Item { status, kind, heading } -%}
-<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ crate::icons::item_kind_svg(kind) }}{{ heading|safe }}</span>
+<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Text) %}{% endcall %}{% endif %}{{ crate::icons::item_kind_svg(kind) }}{{ heading|safe }}</span>
 {%- when crate::facts::Piece::LaneHead(heading) -%}
 <span class="related-item">{{ heading|safe }}</span>
 {%- when crate::facts::Piece::Markup(markup) -%}
@@ -134,7 +128,7 @@
     readers and taking the spare width of its row, `value` empty while it is
     unset. -#}
 {%- macro filter_search(label, name, value) -%}
-<label class="input input-sm grow">{% call icon(crate::icons::Icon::MagnifyingGlass, crate::icons::IconSize::Inline, "opacity-60") %}{% endcall %}<input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ label }}" aria-label="{{ label }}" autocomplete="off"></label>
+<label class="input input-sm grow">{% call icon(crate::icons::Icon::MagnifyingGlass, crate::icons::IconSize::Input, "opacity-60") %}{% endcall %}<input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ label }}" aria-label="{{ label }}" autocomplete="off"></label>
 {%- endmacro -%}
 
 {#- A filter chosen from `options`, each its value and whether it is
@@ -278,7 +272,7 @@
 <td class="fold-cell w-0 pr-0">
 {%- match fold -%}
 {%- when crate::table::Fold::Opens(opens) -%}
-<button class="fold group btn btn-ghost btn-xs btn-square" type="button" aria-expanded="false" aria-controls="{{ opens.rows()|join(" ") }}" aria-label="{{ opens.label() }}">{% call icon(crate::icons::Icon::ChevronRight, crate::icons::IconSize::Inline, "group-aria-expanded:hidden") %}{% endcall %}{% call icon(crate::icons::Icon::ChevronDown, crate::icons::IconSize::Inline, "hidden group-aria-expanded:block") %}{% endcall %}</button>
+<button class="fold group btn btn-ghost btn-xs btn-square" type="button" aria-expanded="false" aria-controls="{{ opens.rows()|join(" ") }}" aria-label="{{ opens.label() }}">{% call icon(crate::icons::Icon::ChevronRight, crate::icons::IconSize::Button, "group-aria-expanded:hidden") %}{% endcall %}{% call icon(crate::icons::Icon::ChevronDown, crate::icons::IconSize::Button, "hidden group-aria-expanded:block") %}{% endcall %}</button>
 {%- when crate::table::Fold::Nothing -%}
 {%- endmatch -%}
 </td>
@@ -315,7 +309,7 @@
 {#- `said` of what does not read, in secondary text after Failed's icon,
     and in `class` too. -#}
 {%- macro unreadable(said, class = "") -%}
-<div class="text-base-content/60 flex items-center gap-1{% if !class.is_empty() %} {{ class }}{% endif %}">{% call icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Inline) %}{% endcall %}<span>{{ said }}</span></div>
+<div class="text-base-content/60 flex items-center gap-1{% if !class.is_empty() %} {{ class }}{% endif %}">{% call icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Text) %}{% endcall %}<span>{{ said }}</span></div>
 {%- endmacro -%}
 
 {#- The classes of a card (`docs/specs/ui_patterns.md`, Cards), in
@@ -376,7 +370,7 @@ card {% call card_surface(colour) %}{% endcall %}
 <td class="{{ column.align() }}">
 {%- match column -%}
 {%- when crate::runs_table::RunsColumn::Outcome -%}
-{% call status(row.status, row.word) %}{% endcall %}
+{{ crate::components::StatusBadge::of(row.status, row.word) }}
 {%- when crate::runs_table::RunsColumn::Run -%}
 <span class="whitespace-nowrap">{{ row.id|safe }}</span>
 {%- when crate::runs_table::RunsColumn::Item -%}

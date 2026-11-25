@@ -6,6 +6,8 @@ use std::fmt;
 
 use askama::Template;
 
+use linewright_core::phrase::Status;
+
 use super::html::Html;
 use super::icons::CardIcon;
 
@@ -51,5 +53,68 @@ impl CardTitle {
             icon,
             name: super::html::escape(name),
         }
+    }
+}
+
+/// A status's badge (`docs/specs/ui_patterns.md`, Status): the badge of the
+/// spec's table, `badge-sm`, holding the status's icon, then `word`, so
+/// that it is never told by colour alone. Paused's is a paused badge
+/// (`docs/specs/components.md`, Paused badge). It is of class `tone`, which
+/// a badge that is no status's is not.
+#[derive(Template)]
+#[template(
+    source = r#"<span class="tone {{ status.badge() }} badge-sm">{{ crate::icons::status_icon(status).svg(crate::icons::IconSize::Badge) }}<span>{{ word }}</span></span>"#,
+    ext = "html"
+)]
+pub(super) struct StatusBadge<'a> {
+    pub(super) status: Status,
+    pub(super) word: &'a str,
+}
+
+impl askama::filters::HtmlSafe for StatusBadge<'_> {}
+
+impl<'a> StatusBadge<'a> {
+    /// The badge of `status`, holding `word`.
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "askama passes a template's values by reference, at any depth"
+    )]
+    pub(super) fn of(status: &Status, word: &'a str) -> StatusBadge<'a> {
+        StatusBadge {
+            status: *status,
+            word,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::html;
+    use super::*;
+
+    /// `docs/specs/ui_patterns.md`, Status, and `docs/specs/components.md`,
+    /// Paused badge.
+    #[test_log::test]
+    fn a_status_badge_is_its_statuss_small_badge_with_its_icon_first() {
+        let done = html::rendered(&StatusBadge::of(&Status::Done, "done")).to_string();
+        assert!(
+            done.starts_with(
+                r#"<span class="tone badge badge-success badge-sm"><svg class="icon size-[1em] shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" data-icon="check-circle">"#
+            ),
+            "{done}"
+        );
+        assert!(done.ends_with("</svg><span>done</span></span>"), "{done}");
+
+        let paused = html::rendered(&StatusBadge::of(&Status::Paused, "<queued>")).to_string();
+        assert!(
+            paused.starts_with(
+                r#"<span class="tone badge badge-outline text-base-content/60 badge-sm"><svg class="icon size-[1em] shrink-0""#
+            ),
+            "{paused}"
+        );
+        assert!(
+            paused.ends_with("<span>&#60;queued&#62;</span></span>"),
+            "{paused}"
+        );
     }
 }

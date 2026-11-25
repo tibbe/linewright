@@ -122,7 +122,7 @@ fn github(number: Number, repo: &str) -> String {
     format!(
         r#"<a class="github" href="{href}" aria-label="{number} on GitHub" data-tip="{number} on GitHub">{icon}</a>"#,
         href = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
-        icon = Icon::ArrowTopRightOnSquare.svg(IconSize::Inline),
+        icon = Icon::ArrowTopRightOnSquare.svg(IconSize::Text),
     )
 }
 

@@ -85,24 +85,55 @@ icons! {
     GitPullRequest: "git-pull-request", "icons/octicons/git-pull-request-16.svg";
 }
 
-/// Where an icon sits, which sizes it.
+/// Where an icon sits, which sizes it as daisyUI's examples of that
+/// component do (`docs/specs/design_system.md`, Icons, Sizes), and aligns
+/// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum IconSize {
-    /// Before a `card-title`.
-    CardTitle,
-    /// In a `badge`, as daisyUI's badge with an icon has it.
+    /// In an `alert`.
+    Alert,
+    /// In a `badge`.
     Badge,
-    /// Anywhere else.
-    Inline,
+    /// In a `btn`.
+    Button,
+    /// In an `input`.
+    Input,
+    /// In a `menu`.
+    Menu,
+    /// Before the `card-title` of a card with icon
+    /// (`docs/specs/components.md`, Card with icon).
+    CardTitle,
+    /// In a line of text, centred on it (`docs/specs/design_system.md`,
+    /// Icons, Alignment).
+    Text,
+    /// A transcript's chevron (`docs/specs/components.md`, Transcript).
+    Chevron,
 }
 
 impl IconSize {
+    /// Its classes: its size, and for [`IconSize::Text`] what centres it on
+    /// its line.
     pub(super) fn class(self) -> &'static str {
         match self {
-            IconSize::CardTitle => "size-5",
-            IconSize::Badge => "size-[1em]",
-            IconSize::Inline => "size-4",
+            IconSize::Alert => "size-6",
+            IconSize::Badge | IconSize::Input => "size-[1em]",
+            IconSize::Button => "size-[1.2em]",
+            IconSize::Menu | IconSize::CardTitle => "size-5",
+            IconSize::Text => "size-[1em] inline-block align-[calc(0.5cap-0.5em)]",
+            IconSize::Chevron => "size-4",
         }
+    }
+}
+
+/// A size an icon or a logo is drawn in, as its classes.
+pub(super) trait DrawnSize: Copy {
+    /// Its classes.
+    fn class(self) -> &'static str;
+}
+
+impl DrawnSize for IconSize {
+    fn class(self) -> &'static str {
+        IconSize::class(self)
     }
 }
 
@@ -190,7 +221,7 @@ impl Fill {
 /// If `source` is not an `svg` element with a `viewBox`.
 pub(super) fn drawn_svg(
     source: &'static str,
-    size: IconSize,
+    size: impl DrawnSize,
     class: Option<&str>,
     fill: Fill,
     read: Read,
@@ -253,7 +284,7 @@ pub(super) fn status_icon(status: &Status) -> Icon {
 }
 
 /// The icon of a status, named by the status (`docs/specs/ui_patterns.md`,
-/// Status), drawn inline.
+/// Status), in a line of text.
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "askama passes a template's values by reference, at any depth"
@@ -267,7 +298,7 @@ pub(super) fn named_status_icon(status: &Status) -> Html {
         Status::Paused => "paused",
         Status::Cancelled => "cancelled",
     };
-    status_icon(status).named(IconSize::Inline, name)
+    status_icon(status).named(IconSize::Text, name)
 }
 
 /// The icon of a card with icon, which its screen gives it
@@ -332,13 +363,13 @@ fn item_kind_icon(kind: ItemKind) -> Icon {
 }
 
 /// The icon of an item of `kind` beside its number, which a screen reader
-/// reads before it.
+/// reads before it, in a line of text.
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "askama passes a template's values by reference, at any depth"
 )]
 pub(super) fn item_kind_svg(kind: &ItemKind) -> Html {
-    item_kind_icon(*kind).named(IconSize::Inline, kind_name(*kind))
+    item_kind_icon(*kind).named(IconSize::Text, kind_name(*kind))
 }
 
 /// What a screen reader reads of the icon of an item of `kind`.
@@ -375,14 +406,23 @@ mod tests {
         }
     }
 
-    /// `docs/specs/design_system.md`, Icons, Sizes: an icon is `size-5` before
-    /// a `card-title`, `size-[1em]` in a `badge`, and `size-4` elsewhere.
+    /// `docs/specs/design_system.md`, Icons, Sizes and Alignment: an icon is
+    /// the size daisyUI's examples give it in the component it sits in, and
+    /// one in a line of text is centred on it.
     #[test_log::test]
     fn an_icon_is_sized_by_where_it_sits_and_takes_the_colour_of_its_text() {
         for (size, class) in [
-            (IconSize::CardTitle, "size-5"),
+            (IconSize::Alert, "size-6"),
             (IconSize::Badge, "size-[1em]"),
-            (IconSize::Inline, "size-4"),
+            (IconSize::Button, "size-[1.2em]"),
+            (IconSize::Input, "size-[1em]"),
+            (IconSize::Menu, "size-5"),
+            (IconSize::CardTitle, "size-5"),
+            (
+                IconSize::Text,
+                "size-[1em] inline-block align-[calc(0.5cap-0.5em)]",
+            ),
+            (IconSize::Chevron, "size-4"),
         ] {
             assert_eq!(
                 Icon::Plus.svg(size).to_string(),
@@ -396,7 +436,7 @@ mod tests {
     #[test_log::test]
     fn every_icon_draws_its_vendored_svg() {
         for icon in Icon::ALL {
-            let svg = icon.svg(IconSize::Inline).to_string();
+            let svg = icon.svg(IconSize::Text).to_string();
             assert!(svg.contains(r#" viewBox="0 0 "#), "{icon:?}: {svg}");
             assert!(svg.contains("><path "), "{icon:?}: {svg}");
         }
@@ -406,7 +446,7 @@ mod tests {
     fn a_named_icon_is_an_image_a_screen_reader_reads() {
         assert_eq!(
             item_kind_svg(&ItemKind::Issue).to_string(),
-            r#"<svg class="icon size-4 shrink-0" viewBox="0 0 16 16" fill="currentColor" role="img" aria-label="issue" data-icon="issue-opened"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg>"#,
+            r#"<svg class="icon size-[1em] inline-block align-[calc(0.5cap-0.5em)] shrink-0" viewBox="0 0 16 16" fill="currentColor" role="img" aria-label="issue" data-icon="issue-opened"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg>"#,
         );
     }
 }

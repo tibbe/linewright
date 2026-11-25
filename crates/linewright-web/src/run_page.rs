@@ -35,6 +35,7 @@ use linewright_core::transcript::{
 use super::buttons::{ScreenButton, Verb};
 use super::caller::{Reader, Signed};
 use super::capture::{self, Offer};
+use super::components::StatusBadge;
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon, IconSize};
 use super::names::Naming;
@@ -524,8 +525,8 @@ fn line_html(row: &Row) -> String {
         (
             "summary",
             Icon::ChevronRight
-                .svg(IconSize::Inline)
-                .then(&Icon::ChevronDown.svg(IconSize::Inline)),
+                .svg(IconSize::Chevron)
+                .then(&Icon::ChevronDown.svg(IconSize::Chevron)),
         )
     } else {
         ("div", Html::default())
@@ -923,18 +924,8 @@ fn io_html(id: &str, call: &Call) -> String {
     format!(r#"<div class="io my-1" id="{id}-io">{io}</div>"#)
 }
 
-#[derive(Template)]
-#[template(
-    source = r#"{%- import "macros.html" as ui -%}{% call ui::status(status, word) %}{% endcall %}"#,
-    ext = "html"
-)]
-struct Badge<'a> {
-    status: Status,
-    word: &'a str,
-}
-
 pub(super) fn status_html(status: Status, word: &str) -> String {
-    render(&Badge { status, word })
+    render(&StatusBadge::of(&status, word))
 }
 
 /// Where the page's stream follows a run in flight from.

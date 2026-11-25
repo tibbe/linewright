@@ -6,7 +6,7 @@
 {%- if !automations.unparsed.is_empty() %}
 <ul class="unparsed space-y-1">
 {%- for file in automations.unparsed %}
-<li class="{{ linewright_core::phrase::Status::Failed.alert() }}">{% call ui::icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Inline) %}{% endcall %}<span>{{ file|safe }}</span></li>
+<li class="{{ linewright_core::phrase::Status::Failed.alert() }}">{% call ui::icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Alert) %}{% endcall %}<span>{{ file|safe }}</span></li>
 {%- endfor %}
 </ul>
 {%- endif %}
@@ -31,7 +31,7 @@
 <td class="{{ column.align() }}">
 {%- match row.last_run -%}
 {%- when LastRunShown::Run { id, href, status, word, about } -%}
-<a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {% call ui::status(status, word) %}{% endcall %}
+<a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {{ crate::components::StatusBadge::of(status, word) }}
 {%- when LastRunShown::NoneYet(phrase) -%}
 {{ phrase|safe }}
 {%- endmatch -%}
