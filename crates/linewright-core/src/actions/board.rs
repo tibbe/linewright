@@ -46,6 +46,8 @@ pub struct LaneScreen {
 pub struct LaneHeadScreen {
     pub number: Number,
     pub title: String,
+    /// Whether it is a pull request; a tracking issue never is.
+    pub pull_request: bool,
     /// The tracking issue's tickets, for work cut into tickets.
     #[serde(flatten)]
     pub tickets: Option<Tickets>,
@@ -55,7 +57,7 @@ pub struct LaneHeadScreen {
 
 impl LaneHeadScreen {
     pub fn of(heading: &LaneHeading) -> LaneHeadScreen {
-        let (number, title, tickets) = match &heading.head {
+        let (number, title, pull_request, tickets) = match &heading.head {
             LaneHead::Tracking {
                 number,
                 title,
@@ -65,16 +67,22 @@ impl LaneHeadScreen {
             } => (
                 *number,
                 title,
+                false,
                 Some(Tickets {
                     tickets_closed: *tickets_closed,
                     tickets: *tickets,
                 }),
             ),
-            LaneHead::Item { number, title } => (*number, title, None),
+            LaneHead::Item {
+                number,
+                title,
+                pull_request,
+            } => (*number, title, *pull_request, None),
         };
         LaneHeadScreen {
             number,
             title: title.clone(),
+            pull_request,
             tickets,
             finished: heading.finished,
         }
