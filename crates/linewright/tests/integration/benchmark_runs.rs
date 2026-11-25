@@ -286,6 +286,42 @@ async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch_but_their_na
 }
 
 #[test_log::test(tokio::test)]
+async fn lw_benchmark_run_show_without_serve_shows_an_open_run_waiting_for_serve() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
+    let repo = board(work_dir.path()).await;
+    let configurations = tempfile::tempdir().unwrap();
+    let short = short(configurations.path());
+    let launched = serve
+        .lw(&[
+            "benchmark-run",
+            "launch",
+            "1",
+            "--configuration",
+            &format!("short={}", short.display()),
+        ])
+        .await;
+    assert_eq!(launched.code, Some(0), "{}", launched.stderr);
+    serve.stop().await;
+
+    let waiting = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
+    trial(&repo, 1, (1, 0, 0), "state = 'running'").await;
+    let running = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
+
+    for shown in [waiting, running] {
+        assert_eq!(shown.code, Some(0), "{}", shown.stderr);
+        assert!(
+            shown
+                .stdout
+                .lines()
+                .any(|line| line == "state: waiting for serve"),
+            "{}",
+            shown.stdout
+        );
+    }
+}
+
+#[test_log::test(tokio::test)]
 async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
     let work_dir = tempfile::tempdir().unwrap();
     let serve = FakeServe::over(work_dir.path()).await;
