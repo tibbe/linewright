@@ -1644,6 +1644,7 @@ async fn a_trials_entries_are_its_runs_then_its_scorers_each_named_by_its_transc
     assert_eq!(pending.entries, []);
 }
 
+/// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
 async fn a_trial_whose_output_names_an_automations_run_is_no_trial() {
     let pages = with_benchmark_run().await;
@@ -1651,41 +1652,21 @@ async fn a_trial_whose_output_names_an_automations_run_is_no_trial() {
 
     let (status, body) = pages.get("/benchmark-runs/1/2/2/2/run").await;
 
-    assert_eq!(status, 404);
-    let html = Html::parse_document(&body);
-    assert_eq!(
-        text(select(&html, "main #transcript")[0]),
-        "benchmark run 1 has no trial 2/2/2"
-    );
+    super::shell::assert_not_found(status, &body, "/benchmark-runs/1/2/2/2/run");
 }
 
 /// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
-async fn the_page_of_no_benchmark_run_says_there_is_none() {
+async fn the_page_of_no_benchmark_run_is_no_such_thing() {
     let pages = with_benchmark_run().await;
 
-    let (no_benchmark_run, no_benchmark_run_body) = pages.get("/benchmark-runs/9").await;
-    let (no_id, no_id_body) = pages.get("/benchmark-runs/first").await;
-    let (trial, trial_body) = pages.get("/benchmark-runs/9/1/1/1/run").await;
-
-    for (status, body, region, shown) in [
-        (
-            no_benchmark_run,
-            no_benchmark_run_body,
-            "benchmark-run",
-            "No such benchmark run 9",
-        ),
-        (
-            no_id,
-            no_id_body,
-            "benchmark-run",
-            "No such benchmark run first",
-        ),
-        (trial, trial_body, "transcript", "No such benchmark run 9"),
+    for address in [
+        "/benchmark-runs/9",
+        "/benchmark-runs/first",
+        "/benchmark-runs/9/1/1/1/run",
     ] {
-        assert_eq!(status, 404);
-        let html = Html::parse_document(&body);
-        assert_eq!(text(select(&html, &format!("main #{region}"))[0]), shown);
+        let (status, body) = pages.get(address).await;
+        super::shell::assert_not_found(status, &body, address);
     }
 }
 

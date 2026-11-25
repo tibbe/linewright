@@ -137,21 +137,12 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
 
 /// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
-async fn the_item_page_of_no_item_says_there_is_none() {
+async fn the_item_page_of_no_item_is_no_such_thing() {
     let pages = Pages::of(for_the_maintainer()).await;
 
     let (status, body) = pages.get("/items/99").await;
 
-    assert_eq!(status, 404);
-    let html = Html::parse_document(&body);
-    assert_eq!(
-        select(&html, "main #item")
-            .into_iter()
-            .map(text)
-            .collect::<Vec<_>>(),
-        ["No such item #99"]
-    );
-    assert_eq!(select(&html, ".drawer-side nav").len(), 1);
+    super::shell::assert_not_found(status, &body, "/items/99");
 }
 
 #[test_log::test(tokio::test)]

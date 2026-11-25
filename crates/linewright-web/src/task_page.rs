@@ -22,7 +22,7 @@ use super::editing::{self, EditDialog};
 use super::html::{self, Html};
 use super::icons::CardIcon;
 use super::item_parts::InlineItem;
-use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
+use super::shell::{self, Area, Frame, Heading, Navigation, Place};
 use super::stats::{Stat, absent};
 use super::{ErrorPage, Page, benchmark_path, events, nothing_there, render, run_path};
 
@@ -178,7 +178,7 @@ fn page(task: &TaskScreen, navigation: Navigation) -> Page {
                 task.benchmark.name.to_string(),
                 benchmark_path(task.benchmark.id),
             )
-            .screen(TASK, Thing::Found(heading)),
+            .screen(TASK, heading),
         stream(task.task.id),
         navigation,
     )
@@ -229,23 +229,21 @@ pub(super) async fn task_page(
         .into_response(),
         Err(unshown) => {
             let events = stream(&id);
-            let page = |thing| {
-                Page::new(
-                    Place::within(Area::Benchmarks).screen(TASK, thing),
-                    events,
-                    navigation,
-                )
-            };
             match unshown {
-                Unshown::NoSuch => nothing_there(page, Missing::Task(id), frame, "task"),
+                Unshown::NoSuch => nothing_there(events, navigation, frame, "task"),
                 Unshown::Failed(e) => {
                     let error = format!("{e:#}");
                     warn!(task = id, error, "reading a task failed");
+                    let heading = Heading {
+                        icon: Some(CardIcon::Beaker),
+                        ..Heading::named(id)
+                    };
                     let page = ErrorPage {
-                        page: page(Thing::Found(Heading {
-                            icon: Some(CardIcon::Beaker),
-                            ..Heading::named(id)
-                        })),
+                        page: Page::new(
+                            Place::within(Area::Benchmarks).screen(TASK, heading),
+                            events,
+                            navigation,
+                        ),
                         frame,
                         region: "task",
                         error,

@@ -20,7 +20,7 @@ use super::icons::CardIcon;
 use super::item_parts::{TextItem, Weight};
 use super::names::Naming;
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
+use super::shell::{self, Frame, Heading, Navigation, Place};
 use super::{ErrorPage, Page, events, nothing_there, render};
 
 /// #N's facts, ready for the page.
@@ -206,14 +206,14 @@ struct ItemRegion<'a> {
     item: &'a ItemShown,
 }
 
-/// Item `number`'s page, with `thing` its heading or that it is missing.
-fn page(number: Number, thing: Thing, navigation: Navigation) -> Page {
-    Page::new(
-        Place::Alone(thing),
-        format!("/events/items/{}", number.0),
-        navigation,
-    )
-    .filling_the_viewport()
+/// The path of item `number`'s page's stream.
+fn item_events_path(number: Number) -> String {
+    format!("/events/items/{}", number.0)
+}
+
+/// Item `number`'s page, under `heading`.
+fn page(number: Number, heading: Heading, navigation: Navigation) -> Page {
+    Page::new(Place::Alone(heading), item_events_path(number), navigation).filling_the_viewport()
 }
 
 pub(super) async fn item_page(
@@ -226,11 +226,7 @@ pub(super) async fn item_page(
         Ok((item, snapshot)) => {
             let naming = naming(&sources, Some(&snapshot));
             ItemPage {
-                page: page(
-                    number,
-                    Thing::Found(heading(&item.facts, naming.repo())),
-                    navigation,
-                ),
+                page: page(number, heading(&item.facts, naming.repo()), navigation),
                 item: ItemShown::of(&item.facts, &naming),
                 runs: RunsShown::of_item(&item.runs, number, &naming),
                 frame,
@@ -251,20 +247,11 @@ fn naming<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Naming<'a
 }
 
 fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigation) -> Response {
-    if let Unexplained::NoSuchItem(missing) = e {
-        return nothing_there(
-            |thing| page(number, thing, navigation),
-            Missing::Item(*missing),
-            frame,
-            "item",
-        );
+    if let Unexplained::NoSuchItem(_) = e {
+        return nothing_there(item_events_path(number), navigation, frame, "item");
     }
     let page = ErrorPage {
-        page: page(
-            number,
-            Thing::Found(Heading::named(number.to_string())),
-            navigation,
-        ),
+        page: page(number, Heading::named(number.to_string()), navigation),
         frame,
         region: "item",
         error: e.to_string(),
@@ -292,11 +279,7 @@ pub(super) async fn item_events(
             let naming = naming(&sources, snapshot.as_deref());
             if let Some(facts) = facts {
                 let item = ItemShown::of(&facts, &naming);
-                let page = page(
-                    number,
-                    Thing::Found(heading(&facts, naming.repo())),
-                    navigation,
-                );
+                let page = page(number, heading(&facts, naming.repo()), navigation);
                 regions.extend(shell::regions(&frame, &page));
                 regions.push(("item", render(&ItemRegion { item: &item })));
             } else {

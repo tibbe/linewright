@@ -206,8 +206,8 @@ pub(super) async fn remember_navigation(body: Bytes) -> Response {
 }
 
 /// Which of the spec's kinds of screen a page is (`docs/specs/shell.md`,
-/// Breadcrumbs; `docs/specs/components.md`, Heading), which decides its
-/// breadcrumbs, its heading card and its title.
+/// Breadcrumbs and No such thing; `docs/specs/components.md`, Heading),
+/// which decides its breadcrumbs, its heading card and its title.
 #[derive(Clone)]
 pub(super) enum Place {
     /// A screen of the navigation: its crumbs are the area, linked, then
@@ -220,36 +220,23 @@ pub(super) enum Place {
         area: Area,
         crumbs: Vec<Crumb>,
         screen: &'static str,
-        thing: Thing,
+        heading: Heading,
     },
     /// A screen of one thing that belongs to no other, such as
     /// Run: it has no breadcrumbs, and its heading's name is its `h1`.
-    Alone(Thing),
+    Alone(Heading),
     /// A screen of the account's menu, named `name`, such as
     /// Authorizations: it has no breadcrumbs and no heading card, and its
     /// card's title is its `h1`.
     Account { name: &'static str },
+    /// No such thing: an address with nothing at it. It has no breadcrumbs
+    /// and no heading card, and is titled "Not found · Linewright".
+    NotFound,
 }
 
-/// What a screen of one thing shows of it.
-#[derive(Clone)]
-pub(super) enum Thing {
-    Found(Heading),
-    /// The link named what does not exist: the screen shows "No such" and
-    /// no heading card.
-    Missing(Missing),
-}
-
-impl Thing {
-    /// Its name in the screen's title: its heading's, or the one its link
-    /// gave.
-    fn name(&self) -> String {
-        match self {
-            Thing::Found(heading) => heading.title.clone(),
-            Thing::Missing(missing) => name_given(missing),
-        }
-    }
-}
+/// The title of No such thing, which is also its `h1`
+/// (`docs/specs/shell.md`, No such thing).
+pub(super) const NOT_FOUND: &str = "Not found · Linewright";
 
 /// A heading card (`docs/specs/components.md`, Heading).
 #[derive(Clone)]
@@ -286,21 +273,6 @@ impl Heading {
             state: None,
             line: None,
         }
-    }
-}
-
-/// The name the link gave to `missing`, as the heading of what it names
-/// would.
-fn name_given(missing: &Missing) -> String {
-    match missing {
-        Missing::Item(number) => number.to_string(),
-        Missing::Run(id)
-        | Missing::Benchmark(id)
-        | Missing::Task(id)
-        | Missing::Configuration(id)
-        | Missing::Person(id)
-        | Missing::Authorization(id) => id.clone(),
-        Missing::BenchmarkRun(id) => format!("Benchmark run {id}"),
     }
 }
 
@@ -344,7 +316,7 @@ impl Place {
                 screen,
                 ..
             } => (*area, crumbs, screen),
-            Place::Alone(..) | Place::Account { .. } => return vec![],
+            Place::Alone(..) | Place::Account { .. } | Place::NotFound => return vec![],
         };
         let area = CrumbShown {
             name: area.name(),
@@ -367,22 +339,17 @@ impl Place {
     /// Whether it has breadcrumbs, whose last crumb is then the page's `h1`
     /// and at whose right are the screen's buttons.
     pub(super) fn has_crumbs(&self) -> bool {
-        !matches!(self, Place::Alone(..) | Place::Account { .. })
+        !matches!(
+            self,
+            Place::Alone(..) | Place::Account { .. } | Place::NotFound
+        )
     }
 
-    /// What a screen of one thing shows of it.
-    fn thing(&self) -> Option<&Thing> {
-        match self {
-            Place::Navigation(_) | Place::Account { .. } => None,
-            Place::Within { thing, .. } | Place::Alone(thing) => Some(thing),
-        }
-    }
-
-    /// Its heading card, on a screen of one thing that Linewright found.
+    /// Its heading card, on a screen of one thing.
     pub(super) fn heading(&self) -> Option<&Heading> {
-        match self.thing()? {
-            Thing::Found(heading) => Some(heading),
-            Thing::Missing(_) => None,
+        match self {
+            Place::Navigation(_) | Place::Account { .. } | Place::NotFound => None,
+            Place::Within { heading, .. } | Place::Alone(heading) => Some(heading),
         }
     }
 
@@ -390,9 +357,10 @@ impl Place {
     /// (`docs/specs/design_system.md`, Screens, Titles).
     pub(super) fn title(&self) -> String {
         let name = match self {
-            Place::Navigation(area) => area.name().to_string(),
-            Place::Account { name, .. } => (*name).to_string(),
-            Place::Within { thing, .. } | Place::Alone(thing) => thing.name(),
+            Place::Navigation(area) => area.name(),
+            Place::Account { name, .. } => name,
+            Place::Within { heading, .. } | Place::Alone(heading) => &heading.title,
+            Place::NotFound => return NOT_FOUND.to_string(),
         };
         format!("{name} · Linewright")
     }
@@ -408,13 +376,13 @@ impl Within {
         self
     }
 
-    /// The place of the screen `screen` of `thing`, after the crumbs.
-    pub(super) fn screen(self, screen: &'static str, thing: Thing) -> Place {
+    /// The place of the screen `screen`, under `heading`, after the crumbs.
+    pub(super) fn screen(self, screen: &'static str, heading: Heading) -> Place {
         Place::Within {
             area: self.area,
             crumbs: self.crumbs,
             screen,
-            thing,
+            heading,
         }
     }
 }
@@ -691,7 +659,6 @@ pub(super) fn holds(frame: &Frame) -> (&'static str, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use linewright_core::domain::Number;
     use linewright_core::environment::shown::BuiltShown;
 
     /// `docs/specs/shell.md`, Navigation, Remembered: the cookie the server
@@ -760,24 +727,15 @@ mod tests {
         }
     }
 
-    /// `docs/specs/shell.md`, Breadcrumbs, No such thing.
+    /// `docs/specs/shell.md`, No such thing; Breadcrumbs, No such thing.
     #[test_log::test]
-    fn a_missing_things_screen_has_no_crumb_for_it_and_is_titled_by_the_name_its_link_gave() {
-        let within = Place::within(Area::Benchmarks).screen(
-            "Benchmark run",
-            Thing::Missing(Missing::BenchmarkRun("9".into())),
-        );
-        let alone = Place::Alone(Thing::Missing(Missing::Item(Number(812))));
+    fn no_such_thing_has_no_crumbs_and_no_heading_and_is_titled_not_found() {
+        let place = Place::NotFound;
 
-        assert_eq!(
-            within.crumbs(),
-            [link("Benchmarks", "/benchmarks"), here("Benchmark run")]
-        );
-        assert_eq!(within.title(), "Benchmark run 9 · Linewright");
-        assert!(within.heading().is_none());
-        assert_eq!(alone.crumbs(), []);
-        assert_eq!(alone.title(), "#812 · Linewright");
-        assert!(alone.heading().is_none());
+        assert_eq!(place.crumbs(), []);
+        assert!(!place.has_crumbs());
+        assert!(place.heading().is_none());
+        assert_eq!(place.title(), "Not found · Linewright");
     }
 
     fn at(time: &str) -> Timestamp {

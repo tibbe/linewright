@@ -281,30 +281,15 @@ async fn tasks_says_only_that_a_task_removed_from_its_own_benchmark_was_removed(
     }
 }
 
-/// `docs/specs/shell.md`, No such thing;
-/// `docs/specs/shell.md`, Breadcrumbs, No such thing.
+/// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
-async fn a_task_that_does_not_exist_or_was_removed_says_there_is_none() {
+async fn a_task_that_does_not_exist_or_was_removed_is_no_such_thing() {
     let pages = with_benchmarks().await;
     removed(&pages, 1).await;
 
-    for (path, shown) in [
-        ("/tasks/1", "No such task 1"),
-        ("/tasks/9", "No such task 9"),
-        ("/tasks/lanes", "No such task lanes"),
-    ] {
-        let (status, body) = pages.get(path).await;
-        assert_eq!(status, 404, "{path}");
-        let html = Html::parse_document(&body);
-        assert_eq!(text(select(&html, "main #task")[0]), shown, "{path}");
-        assert_eq!(
-            crumbs(&html),
-            [
-                ("Benchmarks".to_string(), Some("/benchmarks".to_string())),
-                ("Task".into(), None),
-            ],
-            "{path}"
-        );
+    for address in ["/tasks/1", "/tasks/9", "/tasks/lanes"] {
+        let (status, body) = pages.get(address).await;
+        super::shell::assert_not_found(status, &body, address);
     }
 }
 

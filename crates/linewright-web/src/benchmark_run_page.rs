@@ -37,8 +37,10 @@ use super::icons::CardIcon;
 use super::launch::counted;
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::run_page::{PageOf, RunQuery, Transcribed, transcript_events, transcript_page};
-use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing, Within};
+use super::run_page::{
+    PageOf, RUN_REGION, RunQuery, Transcribed, transcript_events, transcript_page,
+};
+use super::shell::{self, Area, Frame, Heading, Navigation, Place, Within};
 use super::stats::{ABSENT, Stat, absent};
 use super::table::{Align, Fold};
 use super::write::{Refused, Write, alert};
@@ -985,7 +987,7 @@ impl BenchmarkRunView {
             })
             .collect();
         Page::new(
-            benchmark_crumbs(benchmark).screen(BENCHMARK_RUN, Thing::Found(heading)),
+            benchmark_crumbs(benchmark).screen(BENCHMARK_RUN, heading),
             paging.href(&benchmark_run_path(self.id), cancels).stream,
             navigation,
         )
@@ -1033,20 +1035,6 @@ enum Unshown {
 /// What is said of a benchmark run `id` that there is none of.
 fn no_such(id: &str) -> String {
     format!("there is no benchmark run {id}")
-}
-
-/// Benchmark run `id`, by its ID as a path gives it.
-async fn record_of(
-    permit: &Permit<Read>,
-    sources: &Sources,
-    id: &str,
-) -> Result<BenchmarkRunRecord, Unshown> {
-    let parsed: BenchmarkRunId = id.parse().map_err(|_| Unshown::NoSuch)?;
-    match actions::benchmark_run_record(permit, sources, parsed).await {
-        Ok(Some(record)) => Ok(record),
-        Ok(None) => Err(Unshown::NoSuch),
-        Err(e) => Err(Unshown::Failed(e)),
-    }
 }
 
 /// Benchmark run `id`, by its ID as a path gives it, as its screen shows
@@ -1113,20 +1101,18 @@ pub(super) async fn benchmark_run_page(
         }
         Err(unshown) => {
             let events = paging.href(&format!("/benchmark-runs/{id}"), false).stream;
-            let page = |thing| {
-                Page::new(
-                    Place::within(Area::Benchmarks).screen(BENCHMARK_RUN, thing),
-                    events,
-                    navigation,
-                )
-            };
             if let Unshown::NoSuch = unshown {
-                return nothing_there(page, Missing::BenchmarkRun(id), frame, "benchmark-run");
+                return nothing_there(events, navigation, frame, "benchmark-run");
             }
-            let page = page(Thing::Found(Heading {
+            let heading = Heading {
                 icon: Some(CardIcon::Beaker),
                 ..Heading::named(benchmark_run_name(&id))
-            }));
+            };
+            let page = Page::new(
+                Place::within(Area::Benchmarks).screen(BENCHMARK_RUN, heading),
+                events,
+                navigation,
+            );
             let (status, error) = unshown.answer(&id);
             let page = ErrorPage {
                 page,
@@ -1277,48 +1263,36 @@ fn trial_crumbs(record: &BenchmarkRunRecord) -> Within {
 /// there being none.
 type Lookup = Result<(TrialShown, Transcribed), (StatusCode, String)>;
 
+/// That an address names nothing: no benchmark run, or no trial of one
+/// (`docs/specs/shell.md`, No such thing).
+struct NoSuchTrial;
+
 /// The crumbs of the page of the trial's transcript that `path` names, of
 /// its benchmark run `id`, and its [`Lookup`]; or else that there is no
-/// such benchmark run.
+/// such benchmark run or trial.
 async fn looked_up(
     permit: &Permit<Read>,
     sources: &Sources,
     path: &TrialPath,
     id: BenchmarkRunId,
-) -> Result<(Within, Lookup), Missing> {
-    let missing = || Missing::BenchmarkRun(path.id.clone());
-    let found = match path.parsed(id) {
-        Some((at, of)) => match actions::find_trial(permit, sources, &at).await {
-            Ok(Ok(found)) => Some((at, of, found)),
-            Ok(Err(NoTrial::BenchmarkRun)) => return Err(missing()),
-            Ok(Err(NoTrial::Trial)) => None,
-            Err(e) => {
-                let error = format!("{e:#}");
-                warn!(
-                    benchmark_run = path.id,
-                    trial = path.trial(),
-                    error,
-                    "reading a trial failed"
-                );
-                let failed = (StatusCode::INTERNAL_SERVER_ERROR, error);
-                return Ok((Place::within(Area::Benchmarks), Err(failed)));
-            }
-        },
-        None => None,
+) -> Result<(Within, Lookup), NoSuchTrial> {
+    let Some((at, of)) = path.parsed(id) else {
+        return Err(NoSuchTrial);
     };
-    let Some((at, of, found)) = found else {
-        let none = (
-            StatusCode::NOT_FOUND,
-            format!("benchmark run {} has no trial {}", path.id, path.trial()),
-        );
-        return match record_of(permit, sources, &path.id).await {
-            Ok(record) => Ok((trial_crumbs(&record), Err(none))),
-            Err(Unshown::NoSuch) => Err(missing()),
-            Err(unshown) => Ok((
-                Place::within(Area::Benchmarks),
-                Err(unshown.answer(&path.id)),
-            )),
-        };
+    let found = match actions::find_trial(permit, sources, &at).await {
+        Ok(Ok(found)) => found,
+        Ok(Err(NoTrial::BenchmarkRun | NoTrial::Trial)) => return Err(NoSuchTrial),
+        Err(e) => {
+            let error = format!("{e:#}");
+            warn!(
+                benchmark_run = path.id,
+                trial = path.trial(),
+                error,
+                "reading a trial failed"
+            );
+            let failed = (StatusCode::INTERNAL_SERVER_ERROR, error);
+            return Ok((Place::within(Area::Benchmarks), Err(failed)));
+        }
     };
     let within = trial_crumbs(&found.benchmark_run);
     let Some(kept) = found.transcript(of) else {
@@ -1334,7 +1308,7 @@ async fn looked_up(
     let transcribed = Transcribed {
         kept: kept.kept,
         which: kept.which,
-        missing: None,
+        own: false,
     };
     let shown = TrialShown {
         at,
@@ -1351,11 +1325,8 @@ async fn trial_transcript(
     permit: &Permit<Read>,
     sources: &Sources,
     path: &TrialPath,
-) -> Result<(Place, Result<Transcribed, (StatusCode, String)>), Missing> {
-    let id: BenchmarkRunId = path
-        .id
-        .parse()
-        .map_err(|_| Missing::BenchmarkRun(path.id.clone()))?;
+) -> Result<(Place, Result<Transcribed, (StatusCode, String)>), NoSuchTrial> {
+    let id: BenchmarkRunId = path.id.parse().map_err(|_| NoSuchTrial)?;
     let (within, found) = looked_up(permit, sources, path, id).await?;
     let named = found.as_ref().ok().map_or_else(
         || format!("Trial {}", path.trial()),
@@ -1365,17 +1336,8 @@ async fn trial_transcript(
         line: found.as_ref().ok().map(|(shown, _)| context(shown)),
         ..Heading::named(format!("{named}'s {}", path.of))
     };
-    let place = within.screen(TRIAL, Thing::Found(heading));
+    let place = within.screen(TRIAL, heading);
     Ok((place, found.map(|(_, transcribed)| transcribed)))
-}
-
-/// The page of a trial's transcript whose benchmark run is missing, `thing`.
-fn missing_trial_page(thing: Thing, events: String, navigation: Navigation) -> Page {
-    Page::new(
-        Place::within(Area::Benchmarks).screen(TRIAL, thing),
-        events,
-        navigation,
-    )
 }
 
 /// The page of a trial's run's or scorer's transcript, shown as the run
@@ -1389,15 +1351,10 @@ pub(super) async fn trial_page(
 ) -> Response {
     let (place, transcribed) = match trial_transcript(&permit, &sources, &path).await {
         Ok(shown) => shown,
-        Err(missing) => {
+        Err(NoSuchTrial) => {
             let events = format!("/events{}", uri.path());
             let frame = Frame::of(&permit, &sources).await;
-            return nothing_there(
-                |thing| missing_trial_page(thing, events, navigation),
-                missing,
-                frame,
-                "transcript",
-            );
+            return nothing_there(events, navigation, frame, RUN_REGION);
         }
     };
     transcript_page(
@@ -1426,10 +1383,7 @@ pub(super) async fn trial_events(
     let events = uri.path().to_string();
     let (place, transcribed) = match trial_transcript(&permit, &sources, &path).await {
         Ok((place, transcribed)) => (place, transcribed.ok()),
-        Err(missing) => {
-            let place = Place::within(Area::Benchmarks).screen(TRIAL, Thing::Missing(missing));
-            (place, None)
-        }
+        Err(NoSuchTrial) => (Place::NotFound, None),
     };
     let page: PageOf = Box::new(move || {
         let page = Page::new(place.clone(), events.clone(), navigation);

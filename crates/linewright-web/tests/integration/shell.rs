@@ -310,40 +310,26 @@ async fn a_screen_without_breadcrumbs_has_its_buttons_in_its_heading_card() {
     );
 }
 
+/// `docs/specs/shell.md`, Breadcrumbs: a trial's transcript that has not
+/// begun is not No such thing, as its trial exists, and keeps its crumbs.
 #[test_log::test(tokio::test)]
-async fn a_no_such_screen_has_the_crumbs_of_the_screen_its_link_names_without_a_crumb_for_it() {
+async fn a_transcript_that_has_not_begun_keeps_the_crumbs_of_its_trial() {
     let pages = with_benchmark_run().await;
 
-    for (path, names) in [
-        ("/items/99", vec![]),
-        ("/runs/9/triage-1", vec![]),
-        ("/runs/nothing", vec![]),
-        ("/benchmarks/9", vec![]),
-        (
-            "/benchmark-runs/9",
-            vec![link("Benchmarks", "/benchmarks"), here("Benchmark run")],
-        ),
-        (
-            "/benchmark-runs/9/1/1/1/run",
-            vec![link("Benchmarks", "/benchmarks"), here("Trial")],
-        ),
-        (
-            "/benchmark-runs/1/1/1/2/scorer",
-            vec![
-                link("Benchmarks", "/benchmarks"),
-                link("board", "/benchmarks/1"),
-                link("Benchmark run 1", "/benchmark-runs/1"),
-                here("Trial"),
-            ],
-        ),
-    ] {
-        let (status, body) = pages.get(path).await;
-        let html = Html::parse_document(&body);
+    let (status, body) = pages.get("/benchmark-runs/1/1/1/2/scorer").await;
 
-        assert_eq!(status, 404, "{path}");
-        assert_eq!(crumbs(&html), names, "{path}");
-        assert_eq!(select(&html, "h1").len(), 1, "{path}");
-    }
+    let html = Html::parse_document(&body);
+    assert_eq!(status, 404);
+    assert_eq!(
+        crumbs(&html),
+        [
+            link("Benchmarks", "/benchmarks"),
+            link("board", "/benchmarks/1"),
+            link("Benchmark run 1", "/benchmark-runs/1"),
+            here("Trial"),
+        ]
+    );
+    assert_eq!(select(&html, "h1").len(), 1);
 }
 
 /// `docs/specs/shell.md`, Layout.
@@ -552,22 +538,154 @@ async fn the_stream_of_a_benchmark_run_page_without_the_cancel_dialog_offers_no_
     );
 }
 
-/// `docs/specs/shell.md`, Breadcrumbs, No such thing: a run's "No such"
-/// page keeps no heading as its stream goes on, as the screen shows none.
-#[test_log::test(tokio::test)]
-async fn a_missing_runs_stream_sends_no_heading_card() {
-    let pages = with_benchmark_run().await;
-    let mut events = stream(&pages, "/events/runs/9/triage-1").await;
+/// The title and the `h1` of No such thing (`docs/specs/shell.md`, No such
+/// thing).
+const NOT_FOUND: &str = "Not found · Linewright";
 
+/// Checks that `status` and `body` are No such thing (`docs/specs/shell.md`,
+/// No such thing), at 404: its page is on No such thing's place, which
+/// decides its title, crumbs and heading card, with its `h1` in `text-xl`
+/// and `font-semibold`.
+pub(super) fn assert_not_found(status: u16, body: &str, address: &str) {
+    assert_eq!(status, 404, "{address}: {body}");
+    let html = Html::parse_document(body);
+    assert_eq!(title(&html), NOT_FOUND, "{address}");
+    let h1 = select(&html, "h1");
+    assert_eq!(
+        h1.iter().map(|h1| text(*h1)).collect::<Vec<_>>(),
+        [NOT_FOUND],
+        "{address}"
+    );
+    assert!(
+        has_classes(h1[0], &["text-xl", "font-semibold"]),
+        "{address}: {}",
+        h1[0].html()
+    );
+}
+
+/// `docs/specs/shell.md`, No such thing: an address that names no screen
+/// opens No such thing, in the shell, with no crumbs and no heading card.
+#[test_log::test(tokio::test)]
+async fn an_address_of_no_screen_opens_no_such_thing_in_the_shell() {
+    let pages = with_a_run().await;
+
+    for address in [
+        "/no-such-address",
+        "/benchmark-runs/1/cancel",
+        "/navigation",
+    ] {
+        let (status, body) = pages.get(address).await;
+
+        assert_not_found(status, &body, address);
+        let html = Html::parse_document(&body);
+        assert_eq!(crumbs(&html), [], "{address}");
+        assert_eq!(heading(&html), None, "{address}");
+        assert_eq!(select(&html, ".drawer-side nav").len(), 1, "{address}");
+    }
+}
+
+/// `docs/specs/shell.md`, No such thing; `docs/specs/access.md`, Signing in:
+/// an address that names no screen goes to Sign in for a reader who is not
+/// signed in, as any screen does.
+#[test_log::test(tokio::test)]
+async fn an_address_of_no_screen_goes_to_sign_in_without_a_sign_in() {
+    let pages = with_a_run().await;
+    let request = axum::http::Request::get("/no-such-address")
+        .header("Host", UI_HOST)
+        .body(Body::empty())
+        .unwrap();
+
+    let Ok(response) = pages.router().clone().oneshot(request).await;
+
+    assert_eq!(response.status(), 303);
+    assert_eq!(
+        response.headers()[axum::http::header::LOCATION],
+        "/sign-in?return=%2Fno-such-address"
+    );
+}
+
+/// `docs/specs/shell.md`, No such thing: the stream of a screen of no such
+/// thing keeps it so, with no crumbs, no heading card and its title.
+#[test_log::test(tokio::test)]
+async fn the_stream_of_no_such_thing_keeps_it_so() {
+    let pages = with_benchmark_run().await;
+
+    for address in [
+        "/events/runs/9/triage-1",
+        "/events/benchmark-runs/9/1/1/1/run",
+        "/events/not-found",
+    ] {
+        let mut events = stream(&pages, address).await;
+        let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let first = regions(&first);
+        let heading = select(region_of(&first, "heading"), "#heading")[0];
+        assert!(heading.attr("hidden").is_some(), "{address}");
+        let crumbs = select(region_of(&first, "crumbs"), "#crumbs")[0];
+        assert!(crumbs.attr("hidden").is_some(), "{address}");
+        assert_eq!(title(region_of(&first, "title")), NOT_FOUND, "{address}");
+    }
+}
+
+/// `docs/specs/shell.md`, No such thing: the stream of a Run page that
+/// followed its run, asked for again once the run is gone, as a browser
+/// reconnecting does, streams No such thing rather than failing.
+#[test_log::test(tokio::test)]
+async fn a_followed_runs_stream_asked_for_once_it_is_gone_streams_no_such_thing() {
+    let pages = with_a_run().await;
+
+    let mut events = stream(&pages, "/events/runs/9/triage-1?follow=start").await;
     let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
         .unwrap()
         .unwrap();
 
-    let first = regions(&first);
-    let heading = select(region_of(&first, "heading"), "#heading")[0];
+    assert_eq!(title(region_of(&regions(&first), "title")), NOT_FOUND);
+}
+
+/// `docs/specs/shell.md`, No such thing: a Run page whose run goes away
+/// while it is open shows No such thing from its stream.
+#[test_log::test(tokio::test)]
+async fn a_run_that_goes_away_while_its_page_is_open_becomes_no_such_thing() {
+    let pages = with_a_run().await;
+    let mut events = stream(&pages, "/events/runs/1/triage-1").await;
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        title(region_of(&regions(&first), "title")),
+        "1/triage-1 · Linewright"
+    );
+
+    let pool = back_door(&pages.path("")).await;
+    sqlx::query("DELETE FROM runs WHERE item = 1 AND stage = 'triage' AND n = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let gone = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let sent = regions(&event);
+        if sent.iter().any(|(id, _)| id == "run") {
+            break sent;
+        }
+    };
+    assert_eq!(title(region_of(&gone, "title")), NOT_FOUND);
+    let heading = select(region_of(&gone, "heading"), "#heading")[0];
     assert!(heading.attr("hidden").is_some(), "{}", heading.html());
-    assert_eq!(title(region_of(&first, "title")), "9/triage-1 · Linewright");
+    let shown = select(region_of(&gone, "run"), "#run h1");
+    assert_eq!(
+        shown.iter().map(|h1| text(*h1)).collect::<Vec<_>>(),
+        [NOT_FOUND]
+    );
+    assert!(has_classes(shown[0], &["text-xl", "font-semibold"]));
 }
 
 /// The navigation the drawer of `html` is drawn as: its `data-navigation`.

@@ -910,23 +910,12 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
 
 /// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
-async fn the_page_of_no_run_says_there_is_none() {
+async fn the_page_of_no_run_is_no_such_thing() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
 
-    let (no_run, no_run_body) = pages.get("/runs/1/rework-9").await;
-    let (no_id, no_id_body) = pages.get("/runs/nothing").await;
-
-    for (status, body, error) in [
-        (no_run, no_run_body, "No such run 1/rework-9"),
-        (no_id, no_id_body, "No such run nothing"),
-    ] {
-        assert_eq!(status, 404);
-        let html = Html::parse_document(&body);
-        let shown: Vec<String> = select(&html, "main #transcript")
-            .into_iter()
-            .map(text)
-            .collect();
-        assert_eq!(shown, [error]);
+    for address in ["/runs/1/rework-9", "/runs/nothing"] {
+        let (status, body) = pages.get(address).await;
+        super::shell::assert_not_found(status, &body, address);
     }
 }
 
