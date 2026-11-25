@@ -45,7 +45,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
             [
                 "done",
                 "2/triage-1",
-                "#2: Import fails",
+                "Import fails #2",
                 "triage",
                 "2026-10-01 12:05:00 UTC",
                 "2m 30s",
@@ -54,7 +54,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
             [
                 "done",
                 "1/triage-1",
-                "#1: Export fails",
+                "Export fails #1",
                 "triage",
                 "2026-10-01 12:00:00 UTC",
                 "1m",
@@ -62,19 +62,21 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
             ],
         ]
     );
-    let links: Vec<&str> = select(&html, "#runs tbody a:not(.github)")
+    let links: Vec<Vec<(String, String)>> = select(&html, "#runs tbody tr")
         .into_iter()
-        .filter_map(|a| a.attr("href"))
+        .map(links_in)
         .collect();
-    assert_eq!(
-        links,
-        [
-            "/items/2",
-            "/runs/2/triage-1",
-            "/items/1",
-            "/runs/1/triage-1"
+    let row = |n: u64, title: &str| {
+        vec![
+            (title.to_string(), format!("/items/{n}")),
+            (
+                format!("#{n}"),
+                format!("https://github.com/{REPO}/issues/{n}"),
+            ),
+            ("View".to_string(), format!("/runs/{n}/triage-1")),
         ]
-    );
+    };
+    assert_eq!(links, [row(2, "Import fails"), row(1, "Export fails")]);
     assert_eq!(
         views(&html, "#runs"),
         [
@@ -279,7 +281,7 @@ async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
         [
             "interrupted",
             "1/triage-1",
-            "#1: Do the thing",
+            "Do the thing #1",
             "triage",
             "2026-10-01 11:00:00 UTC",
             "",
@@ -303,10 +305,7 @@ async fn the_runs_page_names_an_item_linewright_does_not_hold_by_its_number_alon
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
-    assert_eq!(
-        links,
-        ["/items/9", &format!("https://github.com/{REPO}/issues/9")]
-    );
+    assert_eq!(links, [format!("https://github.com/{REPO}/issues/9")]);
 }
 
 #[test_log::test(tokio::test)]
@@ -394,7 +393,7 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
     let titles = select(&html, "#runs tbody td:nth-child(3) > *");
     assert_eq!(titles.len(), 2);
     for title in titles {
-        assert_cuts_only_the_title(title, 1);
+        assert_cuts_only_the_title(title);
         assert_eq!(
             grows_in_place(title),
             Vec::<&str>::new(),

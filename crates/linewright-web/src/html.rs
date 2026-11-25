@@ -1,9 +1,8 @@
 use std::fmt::{self, Write as _};
 
-use linewright_core::domain::{Number, Timestamp};
+use linewright_core::domain::Timestamp;
 use linewright_core::phrase::{Phrase, Segment};
 
-use super::icons::{Icon, IconSize};
 use super::names::Naming;
 
 /// Markup with its text escaped, which a template may put in a page as it
@@ -75,55 +74,12 @@ pub(crate) fn duration(class: Option<&str>, seconds: u64, since: Option<Timestam
     })
 }
 
-/// #`number`, linking to its page, and a link to it on GitHub.
-pub(crate) fn item(number: Number, repo: &str) -> Html {
-    Html(format!(
-        "{}{}",
-        page_link(number, &escape(&number.to_string())),
-        github(number, repo),
-    ))
-}
-
-/// #`number` and its title, linking to its page, and a link to it on
-/// GitHub. The number and the title are each a `span` of its own, of class
-/// `number` and `title` (`docs/specs/ui_patterns.md`, Layout).
-pub(crate) fn titled(number: Number, title: &str, repo: &str) -> Html {
-    Html(format!(
-        "{}{}",
-        page_link(
-            number,
-            &Html(format!(
-                r#"<span class="number">{}</span> <span class="title">{}</span>"#,
-                escape(&format!("{number}:")),
-                escape(title),
-            )),
-        ),
-        github(number, repo),
-    ))
-}
-
 /// `content` in a `span` of `class`.
 pub(crate) fn span(class: &str, content: &Html) -> Html {
     Html(format!(
         r#"<span class="{}">{content}</span>"#,
         escape(class)
     ))
-}
-
-/// `content` linking to the page of item `number`.
-fn page_link(number: Number, content: &Html) -> String {
-    format!(
-        r#"<a class="link link-hover" href="/items/{}">{}</a>"#,
-        number.0, content,
-    )
-}
-
-fn github(number: Number, repo: &str) -> String {
-    format!(
-        r#"<a class="github" href="{href}" aria-label="{number} on GitHub" data-tip="{number} on GitHub">{icon}</a>"#,
-        href = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
-        icon = Icon::ArrowTopRightOnSquare.svg(IconSize::Text),
-    )
 }
 
 /// `at` as a focusable `<time>` (`docs/specs/ui_patterns.md`, Layout).

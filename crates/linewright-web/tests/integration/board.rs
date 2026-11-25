@@ -217,16 +217,16 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         board_shown(&html),
         [
             vec![
-                "#2: Big thing — 0/1 tickets closed",
-                "Needs a person: #3: Part one | asked alice · 2026-09-30 09:00:00 UTC",
+                "Big thing #2 — 0/1 tickets closed",
+                "Needs a person: Part one #3 | asked alice · 2026-09-30 09:00:00 UTC",
             ],
             vec![
-                "#1: Do the thing",
-                "Needs a person: #1: Do the thing | decision needed · 2026-09-30 09:00:00 UTC",
+                "Do the thing #1",
+                "Needs a person: Do the thing #1 | decision needed · 2026-09-30 09:00:00 UTC",
             ],
             vec![
-                "#4: Old idea — finished 2026-10-01 09:00:00 UTC",
-                "Done: #4: Old idea | closed as completed · 2026-10-01 09:00:00 UTC",
+                "Old idea #4 — finished 2026-10-01 09:00:00 UTC",
+                "Done: Old idea #4 | closed as completed · 2026-10-01 09:00:00 UTC",
             ],
         ]
     );
@@ -250,11 +250,44 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
             "Done"
         ]
     );
-    let links: Vec<&str> = select(&html, "#board .card h3 a:not(.github)")
+    let name = |title: &str, n: u64| {
+        vec![
+            (title.to_string(), format!("/items/{n}")),
+            (
+                format!("#{n}"),
+                format!("https://github.com/owner/widgets/issues/{n}"),
+            ),
+        ]
+    };
+    let cards: Vec<Vec<(String, String)>> = select(&html, "#board .card h3")
         .into_iter()
-        .filter_map(|a| a.attr("href"))
+        .map(links_in)
         .collect();
-    assert_eq!(links, ["/items/3", "/items/1", "/items/4"]);
+    assert_eq!(
+        cards,
+        [
+            name("Part one", 3),
+            name("Do the thing", 1),
+            name("Old idea", 4)
+        ]
+    );
+    let heads: Vec<Vec<(String, String)>> = select(&html, "#board .lane-head")
+        .into_iter()
+        .map(links_in)
+        .collect();
+    assert_eq!(
+        heads,
+        [
+            name("Big thing", 2),
+            name("Do the thing", 1),
+            name("Old idea", 4)
+        ]
+    );
+    let head_icons: Vec<Option<&str>> = select(&html, "#board .lane-head svg:first-child")
+        .into_iter()
+        .map(|icon| icon.attr("data-icon"))
+        .collect();
+    assert_eq!(head_icons, [Some("issue-opened"); 3]);
     let title = select(&html, "title");
     assert_eq!(text(title[0]), "(2) Board · Linewright");
     assert_no_status_by_colour_alone(&html);
@@ -301,8 +334,8 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
     assert_eq!(
         lanes,
         [
-            "#2: Big thing — 0/1 tickets closed",
-            "#4: Old idea — finished 2026-10-01 09:00:00 UTC",
+            "Big thing #2 — 0/1 tickets closed",
+            "Old idea #4 — finished 2026-10-01 09:00:00 UTC",
         ]
     );
 }
@@ -343,8 +376,8 @@ async fn the_board_narrowed_to_a_person_shows_their_cards_and_counts_the_whole_b
     assert_eq!(
         board_shown(&html),
         [vec![
-            "#2: Big thing — 0/1 tickets closed",
-            "Needs a person: #3: Part one | asked alice · 2026-09-30 09:00:00 UTC",
+            "Big thing #2 — 0/1 tickets closed",
+            "Needs a person: Part one #3 | asked alice · 2026-09-30 09:00:00 UTC",
         ]]
     );
     assert_eq!(select(&html, "#finished").len(), 0);
@@ -393,8 +426,8 @@ async fn the_board_narrowed_to_a_tracking_issues_assignee_shows_its_lane() {
     assert_eq!(
         board_shown(&html),
         [vec![
-            "#2: Big thing — 0/1 tickets closed",
-            "Needs a person: #3: Part one | asked alice · 2026-09-30 09:00:00 UTC",
+            "Big thing #2 — 0/1 tickets closed",
+            "Needs a person: Part one #3 | asked alice · 2026-09-30 09:00:00 UTC",
         ]]
     );
     let people: Vec<&str> = select(&html, "datalist#people option")
@@ -494,7 +527,7 @@ async fn the_boards_stream_narrowed_to_a_person_sends_their_cards_and_the_people
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(cards, ["#3: Part one"]);
+    assert_eq!(cards, ["Part one #3"]);
     let people: Vec<&str> = select(region_of(&first, "people"), "datalist#people option")
         .into_iter()
         .filter_map(|option| option.attr("value"))
@@ -530,7 +563,12 @@ async fn the_boards_stream_sends_the_board_after_a_delivery_moves_a_card() {
         .into_iter()
         .flat_map(|lane| lane.into_iter().skip(1))
         .filter_map(|card| {
-            card.split_once(": #1:")
+            card.split_once(": ")
+                .filter(|(_, card)| {
+                    card.split(" | ")
+                        .next()
+                        .is_some_and(|name| name.ends_with(" #1"))
+                })
                 .map(|(column, _)| column.to_string())
         })
         .collect();
@@ -548,20 +586,20 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         board_shown(&html),
         [
             vec![
-                "#2: Big thing — 0/1 tickets closed",
-                "Needs a person: #3: Part one | asked alice · 2026-09-30 09:00:00 UTC",
+                "Big thing #2 — 0/1 tickets closed",
+                "Needs a person: Part one #3 | asked alice · 2026-09-30 09:00:00 UTC",
             ],
             vec![
-                "#1: Do the thing",
-                "Needs a person: #1: Do the thing | decision needed · 2026-09-30 09:00:00 UTC",
+                "Do the thing #1",
+                "Needs a person: Do the thing #1 | decision needed · 2026-09-30 09:00:00 UTC",
             ],
             vec![
-                "#5: Small thing — 1/1 tickets closed — finished 2026-10-01 09:40:00 UTC",
-                "Done: #6: Only part | closed as completed · 2026-10-01 09:30:00 UTC",
+                "Small thing #5 — 1/1 tickets closed — finished 2026-10-01 09:40:00 UTC",
+                "Done: Only part #6 | closed as completed · 2026-10-01 09:30:00 UTC",
             ],
             vec![
-                "#4: Old idea — finished 2026-10-01 09:00:00 UTC",
-                "Done: #4: Old idea | closed as completed · 2026-10-01 09:00:00 UTC",
+                "Old idea #4 — finished 2026-10-01 09:00:00 UTC",
+                "Done: Old idea #4 | closed as completed · 2026-10-01 09:00:00 UTC",
             ],
         ]
     );
@@ -617,14 +655,20 @@ async fn a_lane_head_and_a_card_title_cut_to_fit_cut_only_the_title_and_are_whol
     assert_eq!(heads.len(), 4);
     for head in heads {
         assert!(lacks_classes(head, &["group"]), "{}", head.html());
-        let cut = select_in(head, ":scope > span")[0];
-        assert_cuts_only_the_title(cut, 1);
-        assert_eq!(grows_in_place(cut), Vec::<&str>::new(), "{}", head.html());
+        assert_cuts_only_the_title(head);
+        let line = select_in(head, ".inline-flex")[0];
+        assert!(has_classes(line, &["items-center"]), "{}", head.html());
+        let tails = select_in(line, ":scope > .tail");
+        for tail in tails {
+            assert!(has_classes(tail, &["shrink-0"]), "{}", head.html());
+        }
+        assert_eq!(grows_in_place(line), Vec::<&str>::new(), "{}", head.html());
     }
     let titles = select(&html, "#board .card h3");
     assert_eq!(titles.len(), 4);
     for title in titles {
-        assert_cuts_only_the_title(title, 2);
+        assert!(has_classes(title, &["card-title"]), "{}", title.html());
+        assert_cuts_only_the_title(title);
         assert_eq!(
             grows_in_place(title),
             Vec::<&str>::new(),
@@ -641,18 +685,6 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
     let html = pages.page("/").await;
 
     assert_eq!(select(&html, "[title]").len(), 0);
-    let github: Vec<(Option<&str>, Option<&str>)> = select(&html, "#board .card a.github")
-        .into_iter()
-        .map(|a| (a.attr("aria-label"), a.attr("data-tip")))
-        .collect();
-    assert_eq!(
-        github,
-        [
-            (Some("#3 on GitHub"), Some("#3 on GitHub")),
-            (Some("#1 on GitHub"), Some("#1 on GitHub")),
-            (Some("#4 on GitHub"), Some("#4 on GitHub")),
-        ]
-    );
     let times = select(&html, "#board time[datetime]");
     let each_cards_and_the_finished_lanes = 4;
     assert_eq!(times.len(), each_cards_and_the_finished_lanes);
@@ -796,7 +828,7 @@ async fn a_card_paused_for_the_usage_limit_shows_its_column_line_tone_and_icons(
     assert_eq!(
         cards_shown(&html),
         [(
-            "Working: #1: Do the thing | paused until the usage limit resets".to_string(),
+            "Working: Do the thing #1 | paused until the usage limit resets".to_string(),
             Kind::Issue
         )]
     );
@@ -858,11 +890,11 @@ async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
     assert_eq!(
         cards,
         [
-            ("#1: Do the thing".to_string(), true, true, 1, false),
-            ("#3: Part one".to_string(), true, true, 1, false),
-            ("#4: Old idea".to_string(), false, false, 0, true),
-            ("#6: Only part".to_string(), false, false, 0, true),
-            ("#8: Blocked".to_string(), false, false, 0, false),
+            ("Blocked #8".to_string(), false, false, 0, false),
+            ("Do the thing #1".to_string(), true, true, 1, false),
+            ("Old idea #4".to_string(), false, false, 0, true),
+            ("Only part #6".to_string(), false, false, 0, true),
+            ("Part one #3".to_string(), true, true, 1, false),
         ]
     );
 }
@@ -890,8 +922,8 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
         [
             "div: Triage Needs a person Ready Working In review Done",
             "div: ",
-            "details: 1 finished lane #1: Do the thing — finished \
-             2026-10-01 09:00:00 UTC #1: Do the thing closed as completed · 2026-10-01 09:00:00 UTC",
+            "details: 1 finished lane Do the thing #1 — finished \
+             2026-10-01 09:00:00 UTC Do the thing #1 closed as completed · 2026-10-01 09:00:00 UTC",
         ]
     );
     let lanes: Vec<Option<&str>> = select(&html, "#finished details")
@@ -901,8 +933,9 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
     assert_eq!(lanes, [Some("lane-1")]);
 }
 
-/// `docs/specs/board.md`, Cards: an issue in review names its pull
-/// request in its line, as a link to the pull request's page.
+/// `docs/specs/board.md`, Cards, Its line: an issue in review names its
+/// pull request in its line by its number, after its icon, linking to it on
+/// GitHub.
 #[test_log::test(tokio::test)]
 async fn an_issue_in_review_links_its_pull_request_in_its_line() {
     let pages = Pages::of(view(
@@ -915,13 +948,18 @@ async fn an_issue_in_review_links_its_pull_request_in_its_line() {
 
     assert_eq!(
         sorted_cards(&html),
-        ["In review: #1: Do the thing | #2 · checks running"]
+        ["In review: Do the thing #1 | #2 · checks running"]
     );
-    let links: Vec<&str> = select(&html, "#board .card .line a:not(.github)")
-        .into_iter()
-        .filter_map(|a| a.attr("href"))
-        .collect();
-    assert_eq!(links, ["/items/2"]);
+    let line = select(&html, "#board .card .line")[0];
+    assert_eq!(
+        links_in(line),
+        [(
+            "#2".to_string(),
+            "https://github.com/owner/widgets/issues/2".to_string()
+        )]
+    );
+    let pull_request = select_in(line, "svg[data-icon='git-pull-request'] + a");
+    assert_eq!(pull_request.len(), 1, "{}", line.html());
 }
 
 #[test_log::test(tokio::test)]
@@ -932,14 +970,25 @@ async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request
     ))
     .await;
 
-    let shown = cards_shown(&pages.page("/").await);
+    let html = pages.page("/").await;
+    let shown = cards_shown(&html);
 
     assert_eq!(
         shown,
         [(
-            "Done: #5: Merged 5 | merged · 2026-10-01 10:00:00 UTC".to_string(),
+            "Done: Merged 5 #5 | merged · 2026-10-01 10:00:00 UTC".to_string(),
             Kind::PullRequest
         )]
+    );
+    let head_icons: Vec<(Option<&str>, Option<&str>)> =
+        select(&html, "#board .lane-head svg:first-child")
+            .into_iter()
+            .map(|icon| (icon.attr("data-icon"), icon.attr("aria-label")))
+            .collect();
+    assert_eq!(
+        head_icons,
+        [(Some("git-pull-request"), Some("pull request"))],
+        "its lane's head has a pull request's icon (`docs/specs/board.md`, Lanes)"
     );
 }
 
@@ -972,14 +1021,14 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
     assert_eq!(
         sorted_cards(&html),
         [
-            "In review: #13: Pull 13 | review required",
-            "In review: #1: Do the thing | #11 · review required",
-            "In review: #2: Do another thing | #12 · checks running",
+            "In review: Do another thing #2 | #12 · checks running",
+            "In review: Do the thing #1 | #11 · review required",
+            "In review: Pull 13 #13 | review required",
         ]
     );
     assert_eq!(
         toned(&html, WAITING_FOR_A_PERSON),
-        ["#13: Pull 13", "#1: Do the thing"]
+        ["Do the thing #1", "Pull 13 #13"]
     );
 }
 
@@ -1028,9 +1077,9 @@ async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_col
     assert_eq!(
         sorted_cards(&html),
         [
-            "Needs a person: #2: First | decision needed · 2026-10-01 09:00:00 UTC",
-            "Ready: #3: Then | blocked by #2 · 2026-10-01 10:00:00 UTC",
-            "Triage: #1: Export fails | 2026-10-01 08:00:00 UTC",
+            "Needs a person: First #2 | decision needed · 2026-10-01 09:00:00 UTC",
+            "Ready: Then #3 | blocked by #2 · 2026-10-01 10:00:00 UTC",
+            "Triage: Export fails #1 | 2026-10-01 08:00:00 UTC",
         ]
     );
     let mut entered: Vec<&str> = select(&html, "#board .card .line time[datetime]")
@@ -1096,8 +1145,8 @@ async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_betwe
     assert_eq!(
         shown,
         [
-            format!("Done: {ticket}: Do the thing"),
-            format!("Done: {ours}: Ours"),
+            format!("Done: Do the thing {ticket}"),
+            format!("Done: Ours {ours}"),
         ]
     );
     let html = web.page(&format!("/items/{}", spec_change.0)).await;
@@ -1126,5 +1175,5 @@ async fn a_pull_request_of_linewrights_it_is_not_assigned_to_says_unassigned_on_
 
     let shown = sorted_cards(&pages.page("/").await);
 
-    assert_eq!(shown, ["In review: #5: Pull 5 | unassigned"]);
+    assert_eq!(shown, ["In review: Pull 5 #5 | unassigned"]);
 }

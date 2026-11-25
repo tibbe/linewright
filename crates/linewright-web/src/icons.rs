@@ -72,7 +72,6 @@ icons! {
     ChevronRight: "chevron-right", "icons/heroicons/chevron-right.svg";
     ChevronDown: "chevron-down", "icons/heroicons/chevron-down.svg";
     MagnifyingGlass: "magnifying-glass", "icons/heroicons/magnifying-glass.svg";
-    ArrowTopRightOnSquare: "arrow-top-right-on-square", "icons/heroicons/arrow-top-right-on-square.svg";
     SignalSlash: "signal-slash", "icons/heroicons/signal-slash.svg";
     ArrowDown: "arrow-down", "icons/heroicons/arrow-down.svg";
     ArrowRightStartOnRectangle: "arrow-right-start-on-rectangle", "icons/heroicons/arrow-right-start-on-rectangle.svg";
@@ -370,6 +369,13 @@ fn item_kind_icon(kind: ItemKind) -> Icon {
 )]
 pub(super) fn item_kind_svg(kind: &ItemKind) -> Html {
     item_kind_icon(*kind).named(IconSize::Text, kind_name(*kind))
+}
+
+/// The icon of a pull request as [`item_kind_svg`] draws it, `me-1` from
+/// the text after it.
+pub(super) fn pull_request_svg_before_text() -> Html {
+    let kind = ItemKind::PullRequest;
+    item_kind_icon(kind).drawn(IconSize::Text, Some("me-1"), Read::Named(kind_name(kind)))
 }
 
 /// What a screen reader reads of the icon of an item of `kind`.

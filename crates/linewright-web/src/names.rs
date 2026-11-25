@@ -4,14 +4,16 @@
 
 use linewright_core::domain::{ItemKind, Number, Snapshot};
 
+use super::components::{Fit, ItemName, ItemNumber};
 use super::html::{self, Html};
 
 /// How a page names the items of its phrases, in the repo `repo`.
 #[derive(Clone, Copy)]
 pub(crate) enum Naming<'a> {
-    /// As a card's line names them: by number alone.
+    /// As a card's line names them: by number alone, a pull request's with
+    /// its icon.
     CardLine { repo: &'a str },
-    /// By number and title where `snapshot`, the snapshot read if any, holds
+    /// By their item name where `snapshot`, the snapshot read if any, holds
     /// the title, and by number alone otherwise.
     Titled {
         repo: &'a str,
@@ -20,19 +22,38 @@ pub(crate) enum Naming<'a> {
 }
 
 impl<'a> Naming<'a> {
-    /// #`number`, with its title where a snapshot of `Titled` holds it,
-    /// linking to its page, and a link to it on GitHub. Its markup is the
-    /// same whether `kind` is an issue or a pull request.
-    pub(crate) fn item(&self, number: Number, _kind: ItemKind) -> Html {
+    /// Item `number`, of `kind`: its number alone, linking to it on GitHub,
+    /// with a pull request's icon before it in a card's line; or its item
+    /// name, wrapping as the text around it does, where `Titled`'s snapshot
+    /// holds its title.
+    pub(crate) fn item(&self, number: Number, kind: ItemKind) -> Html {
+        self.item_fitting(number, kind, Fit::Wrap)
+    }
+
+    /// Item `number` as [`Naming::item`] names it, but an item name fitting
+    /// its line as `fit` says.
+    pub(crate) fn item_fitting(&self, number: Number, kind: ItemKind, fit: Fit) -> Html {
         match *self {
-            Naming::Titled {
+            Naming::CardLine { repo } => html::rendered(&ItemNumber {
+                number,
                 repo,
-                snapshot: Some(snapshot),
-            } => match snapshot.title(number) {
-                Some(title) => html::titled(number, title, repo),
-                None => html::item(number, repo),
-            },
-            Naming::CardLine { repo } | Naming::Titled { repo, .. } => html::item(number, repo),
+                kind: Some(kind),
+            }),
+            Naming::Titled { repo, snapshot } => {
+                match snapshot.and_then(|snapshot| snapshot.title(number)) {
+                    Some(title) => html::rendered(&ItemName {
+                        number,
+                        title,
+                        repo,
+                        fit,
+                    }),
+                    None => html::rendered(&ItemNumber {
+                        number,
+                        repo,
+                        kind: None,
+                    }),
+                }
+            }
         }
     }
 

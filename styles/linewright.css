@@ -133,56 +133,6 @@
     @apply flex-row-reverse;
   }
 
-  a.github > svg.icon {
-    @apply ms-[0.15em];
-  }
-
-  .name-cut-1,
-  .name-cut-2 {
-    @apply gap-0;
-  }
-
-  .name-cut-1 > *,
-  .name-cut-2 > * {
-    @apply shrink-0;
-  }
-
-  .name-cut-1 {
-    @apply inline-flex items-baseline;
-  }
-
-  .name-cut-1 > * {
-    @apply whitespace-pre;
-  }
-
-  .name-cut-1 > :has(> .title) {
-    @apply flex min-w-0 shrink items-baseline gap-x-[0.25em] whitespace-nowrap;
-  }
-
-  .name-cut-1 .title {
-    @apply min-w-0 line-clamp-1 whitespace-normal;
-  }
-
-  .name-cut-2 {
-    @apply flex items-start;
-  }
-
-  .name-cut-2 > :has(> .title) {
-    @apply min-w-0 shrink line-clamp-2;
-  }
-
-  .name-cut-2 .number {
-    @apply whitespace-nowrap;
-  }
-
-  .name-cut-2 > a.github {
-    @apply self-end;
-  }
-
-  .name-cut-2 > svg {
-    @apply mt-[calc((1lh-1em)/2)] mr-[0.25em];
-  }
-
   .board .card.toned {
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }

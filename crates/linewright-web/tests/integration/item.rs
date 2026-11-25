@@ -78,7 +78,7 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
 }
 
 #[test_log::test(tokio::test)]
-async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_last_read_it() {
+async fn the_item_pages_heading_is_its_item_name_and_when_serve_last_read_it() {
     let pages = Pages::of(for_the_maintainer()).await;
 
     let html = pages.page("/items/1").await;
@@ -88,23 +88,23 @@ async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_la
             .into_iter()
             .map(text)
             .collect::<Vec<_>>(),
-        ["#1: Do the thing"]
+        ["Do the thing #1"]
     );
-    let links: Vec<(&str, &str)> = select(&html, "#heading h1 a")
-        .into_iter()
-        .map(|a| {
-            (
-                a.attr("href").unwrap(),
-                a.attr("aria-label").unwrap_or_default(),
-            )
-        })
-        .collect();
+    let h1 = select(&html, "#heading h1")[0];
     assert_eq!(
-        links,
+        links_in(h1),
         [
-            ("/items/1", ""),
-            ("https://github.com/owner/widgets/issues/1", "#1 on GitHub"),
+            ("Do the thing".to_string(), "/items/1".to_string()),
+            (
+                "#1".to_string(),
+                "https://github.com/owner/widgets/issues/1".to_string()
+            ),
         ]
+    );
+    assert!(
+        select_in(h1, "[data-tip-cut], .truncate").is_empty(),
+        "{}",
+        h1.html()
     );
     let as_of = select(&html, "#heading .line");
     assert_eq!(as_of.len(), 1, "{}", html.html());
@@ -446,14 +446,14 @@ fn blocked(unheld: bool) -> linewright_core::status::View {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
+async fn the_item_page_names_a_blocker_it_waits_for_by_its_item_name() {
     let pages = Pages::of(blocked(false)).await;
 
     let html = pages.page("/items/3").await;
 
     assert_eq!(
         fact(&item_facts(&html), "Waiting for"),
-        "#2: Fix the parser, which blocks it"
+        "Fix the parser #2, which blocks it"
     );
     let links: Vec<&str> = select(&html, "#item dd")[1]
         .select(&Selector::parse("a").unwrap())
@@ -481,7 +481,7 @@ async fn the_item_page_names_a_blocker_the_snapshot_does_not_hold_by_its_number_
         .collect();
     assert_eq!(
         waits,
-        ["#2: Fix the parser, which blocks it", "#4, which blocks it"]
+        ["Fix the parser #2, which blocks it", "#4, which blocks it"]
     );
 }
 
@@ -539,7 +539,7 @@ async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {
     let html = pages.page("/items/3").await;
 
     let head = text(select(&board, "#lane-2 .lane-head")[0]);
-    assert_eq!(head, "#2: Big thing — 0/1 tickets closed");
+    assert_eq!(head, "Big thing #2 — 0/1 tickets closed");
     let facts = item_facts(&html);
     assert_eq!(fact(&facts, "Tracking issue"), head);
     let at = facts
@@ -547,11 +547,8 @@ async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {
         .position(|(label, _)| label == "Tracking issue")
         .unwrap();
     let value = select(&html, "#item dd")[at];
-    assert!(
-        select_in(value, "svg:not(a.github > svg)").is_empty(),
-        "{}",
-        value.html()
-    );
+    let icons: Vec<_> = select_in(value, "svg").into_iter().map(kind).collect();
+    assert_eq!(icons, [("issue-opened".to_string(), "issue".to_string())]);
     let links: Vec<&str> = select_in(value, "a")
         .into_iter()
         .filter_map(|a| a.attr("href"))
@@ -579,7 +576,7 @@ async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its
     assert_eq!(fact(&facts, "State"), "In review · #2 · checks running");
     assert_eq!(
         fact(&facts, "Waiting for"),
-        "#2: First try, its pull request, until it is merged or closed"
+        "First try #2, its pull request, until it is merged or closed"
     );
 }
 
@@ -596,7 +593,8 @@ fn kind(icon: ElementRef) -> (String, String) {
 
 /// `docs/specs/board.md`, Item, Heading and Related items: the heading is a
 /// card with icon, whose icon is that of an issue or of a pull request, and a
-/// related item carries the icon of its kind. A screen reader reads each.
+/// related item carries the icon of its kind first, then its item name. A
+/// screen reader reads each icon.
 #[test_log::test(tokio::test)]
 async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_pull_request() {
     let pull = Pull {
@@ -607,14 +605,21 @@ async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_p
 
     let issue = ("issue-opened".to_string(), "issue".to_string());
     let pull_request = ("git-pull-request".to_string(), "pull request".to_string());
-    for (path, related, own, its) in [
+    for (path, related, own, its, name) in [
         (
             "/items/1",
             "Pull requests",
             issue.clone(),
             pull_request.clone(),
+            ("First try", 2),
         ),
-        ("/items/2", "Closes", pull_request, issue),
+        (
+            "/items/2",
+            "Closes",
+            pull_request,
+            issue,
+            ("Do the thing", 1),
+        ),
     ] {
         let html = pages.page(path).await;
         let heading_icons: Vec<_> = select(&html, "#heading h1 svg[role=img]")
@@ -627,16 +632,28 @@ async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_p
             .position(|(label, _)| label == related)
             .unwrap_or_else(|| panic!("{path}: {related}"));
         let value = select(&html, "#item dd")[at];
-        let icons: Vec<_> = select_in(value, ".related-item > svg[role=img]")
+        let icons: Vec<_> = select_in(value, ".related-item > svg:first-child")
             .into_iter()
             .map(kind)
             .collect();
         assert_eq!(icons, [its], "{path}: {}", value.html());
+        let (title, n) = name;
+        assert_eq!(
+            links_in(value),
+            [
+                (title.to_string(), format!("/items/{n}")),
+                (
+                    format!("#{n}"),
+                    format!("https://github.com/owner/widgets/issues/{n}")
+                ),
+            ],
+            "{path}"
+        );
     }
 }
 
 #[test_log::test(tokio::test)]
-async fn the_item_pages_stream_names_a_blocker_by_its_number_and_title() {
+async fn the_item_pages_stream_names_a_blocker_by_its_item_name() {
     let pages = Pages::of(blocked(false)).await;
     let mut events = stream(&pages, "/events/items/3").await;
 
@@ -652,6 +669,6 @@ async fn the_item_pages_stream_names_a_blocker_by_its_number_and_title() {
         .expect("the item's region");
     assert_eq!(
         fact(&item, "Waiting for"),
-        "#2: Fix the parser, which blocks it"
+        "Fix the parser #2, which blocks it"
     );
 }

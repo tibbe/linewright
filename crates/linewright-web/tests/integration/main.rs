@@ -821,33 +821,57 @@ fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {
         .collect()
 }
 
-/// Asserts that `holder` holds a name cut to fit to `lines` lines, as the
-/// stylesheet's cut-name rule cuts it: by its class, with the page's tooltip,
-/// and with only its title cut, its number and its link to GitHub outside
-/// the title, and nothing in it but elements, each of which the rule sizes
-/// (`docs/specs/ui_patterns.md`, Layout).
-fn assert_cuts_only_the_title(holder: ElementRef, lines: u8) {
+/// The links of `holder`, in order, each as its text and where it leads:
+/// for an item name (`docs/specs/components.md`, Item name), its title to its
+/// Item, then its number to GitHub.
+fn links_in(holder: ElementRef) -> Vec<(String, String)> {
+    select_in(holder, "a")
+        .into_iter()
+        .map(|a| (text(a), a.attr("href").unwrap_or_default().to_string()))
+        .collect()
+}
+
+/// Asserts that `holder` holds one item name on one line, with only its
+/// title cut to fit, whole in the page's tooltip while it is cut, and its
+/// number, in secondary text and `font-normal`, always shown
+/// (`docs/specs/components.md`, Item name, and `docs/specs/ui_patterns.md`,
+/// Layout).
+fn assert_cuts_only_the_title(holder: ElementRef) {
     let html = holder.html();
+    let cut = select_in(holder, "[data-tip-cut]");
+    assert_eq!(cut.len(), 1, "{html}");
+    let title = cut[0];
+    assert_eq!(title.value().name(), "a", "{html}");
     assert!(
-        has_classes(holder, &[&format!("name-cut-{lines}")]),
+        title
+            .attr("href")
+            .is_some_and(|href| href.starts_with("/items/")),
         "{html}"
     );
-    assert!(holder.attr("data-tip-cut").is_some(), "{html}");
-    assert_eq!(select_in(holder, ".title").len(), 1, "{html}");
-    assert_eq!(select_in(holder, ".number").len(), 1, "{html}");
-    assert_eq!(select_in(holder, ":scope > a.github").len(), 1, "{html}");
-    assert_eq!(
-        select_in(holder, ".title .number, .title a.github").len(),
-        0,
+    assert!(
+        has_classes(title, &["link", "link-hover", "min-w-0", "truncate"]),
         "{html}"
     );
-    let loose: Vec<&str> = holder
-        .children()
-        .filter_map(|child| child.value().as_text())
-        .map(|text| &**text)
-        .filter(|text| !text.trim().is_empty())
-        .collect();
-    assert_eq!(loose, Vec::<&str>::new(), "{html}");
+    let line = ElementRef::wrap(title.parent().unwrap()).unwrap();
+    assert!(
+        has_classes(line, &["inline-flex", "min-w-0", "max-w-full"]),
+        "{html}"
+    );
+    let number = select_in(line, ":scope > a[href^='https://github.com/']");
+    assert_eq!(number.len(), 1, "{html}");
+    assert!(
+        has_classes(
+            number[0],
+            &[
+                "link",
+                "link-hover",
+                "shrink-0",
+                "font-normal",
+                "text-base-content/60"
+            ]
+        ),
+        "{html}"
+    );
 }
 
 /// Whether `element` has none of `classes`.

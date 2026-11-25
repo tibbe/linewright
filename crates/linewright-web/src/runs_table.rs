@@ -7,6 +7,7 @@ use linewright_core::domain::Number;
 use linewright_core::phrase::Status;
 use linewright_core::runs::{self, Listing, Run, RunOf};
 
+use super::components::Fit;
 use super::html::{self, Html};
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
@@ -90,7 +91,8 @@ impl RunsColumn {
 
 /// What a run is of, as the Item column names it.
 pub(super) enum ItemCell {
-    /// The item's number, and its title where known, linking to its page.
+    /// The item's item name on one line, or its number alone where its
+    /// title is not known (`docs/specs/runs.md`, Runs).
     Item(Html),
     /// The automation's name, for the cell to link to the automations page.
     Automation(String),
@@ -100,7 +102,9 @@ impl ItemCell {
     /// What the run of `of` is of, its item as `naming` names it.
     pub(super) fn of(of: &RunOf, naming: &Naming) -> ItemCell {
         match of {
-            RunOf::Work { item, stage } => ItemCell::Item(naming.item(*item, stage.item_kind())),
+            RunOf::Work { item, stage } => {
+                ItemCell::Item(naming.item_fitting(*item, stage.item_kind(), Fit::OneLine))
+            }
             RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
         }
     }

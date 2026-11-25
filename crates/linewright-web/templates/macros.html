@@ -11,23 +11,23 @@
     the start. An item among them is
     shown as its card is, its card status's icon in place of its line. -#}
 {%- macro facts(facts) -%}
-<dl class="{% call card_look() %}{% endcall %} grid w-fit gap-3 p-4 text-sm">
+<dl class="{% call card_look() %}{% endcall %} grid w-fit max-w-full grid-cols-[minmax(0,1fr)] gap-3 p-4 text-sm">
 {%- for fact in facts %}
 <div class="flex justify-between gap-6">
 <dt class="shrink-0 text-base-content/60">{{ fact.label }}</dt>
 <dd class="flex min-w-0 flex-col items-end">
 {%- for line in fact.lines -%}
-<div>
+<div class="max-w-full">
 {%- for piece in line -%}
 {%- match piece -%}
 {%- when crate::facts::Piece::Text(text) -%}
 {{ text|safe }}
 {%- when crate::facts::Piece::Status { status, words } -%}
 {% call status_text(status, words) %}{% endcall %}
-{%- when crate::facts::Piece::Item { status, kind, heading } -%}
-<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Text) %}{% endcall %}{% endif %}{{ crate::icons::item_kind_svg(kind) }}{{ heading|safe }}</span>
+{%- when crate::facts::Piece::Item { status, kind, name } -%}
+<span class="related-item inline-flex max-w-full min-w-0 items-center">{{ crate::icons::item_kind_svg(kind) }}{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Text) %}{% endcall %}{% endif %}{{ name|safe }}</span>
 {%- when crate::facts::Piece::LaneHead(heading) -%}
-<span class="related-item">{{ heading|safe }}</span>
+<span class="related-item inline-flex max-w-full min-w-0 items-center">{{ heading|safe }}</span>
 {%- when crate::facts::Piece::Markup(markup) -%}
 {{ markup|safe }}
 {%- endmatch -%}
@@ -346,7 +346,7 @@ card {% call card_surface(colour) %}{% endcall %}
 {%- when crate::runs_table::ItemCell::Item(item) -%}
 {{ item|safe }}
 {%- when crate::runs_table::ItemCell::Automation(name) -%}
-<a class="link link-hover min-w-0 shrink truncate" href="/automations">automation {{ name }}</a>
+<a class="link link-hover min-w-0 shrink truncate" href="/automations" data-tip-cut>automation {{ name }}</a>
 {%- endmatch -%}
 {%- endmacro -%}
 
@@ -375,7 +375,7 @@ card {% call card_surface(colour) %}{% endcall %}
 <span class="whitespace-nowrap">{{ row.id|safe }}</span>
 {%- when crate::runs_table::RunsColumn::Item -%}
 {%- if let Some(item) = item -%}
-<div class="name-cut-1 min-w-48 max-w-md" data-tip-cut>{% call item_cell(item) %}{% endcall %}</div>
+<div class="flex min-w-48 max-w-md">{% call item_cell(item) %}{% endcall %}</div>
 {%- endif -%}
 {%- when crate::runs_table::RunsColumn::Stage -%}
 {%- if let Some(stage) = row.stage %}{{ stage }}{% endif -%}

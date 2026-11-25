@@ -14,6 +14,7 @@ use linewright_core::phrase::Status;
 
 use super::caller::Reader;
 use super::cards::{self, lane_head, line_html};
+use super::components::{Fit, ItemName};
 use super::html::{self, Html};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, render, with_filters};
@@ -58,7 +59,8 @@ struct CellShown {
 
 /// A card (`docs/specs/board.md`, Cards).
 struct CardShown {
-    heading: Html,
+    /// Its item name, on one line.
+    name: Html,
     kind: ItemKind,
     /// The status its card status shows as, if it has one.
     status: Option<Status>,
@@ -124,7 +126,12 @@ fn counted(n: usize, thing: &str) -> String {
 impl CardShown {
     fn of(card: &CardScreen, repo: &str) -> CardShown {
         CardShown {
-            heading: html::titled(card.number, &card.title, repo),
+            name: html::rendered(&ItemName {
+                number: card.number,
+                title: &card.title,
+                repo,
+                fit: Fit::OneLine,
+            }),
             kind: ItemKind::of(card.pull_request),
             status: card.status.map(cards::status),
             line: card.line.as_ref().map(|line| line_html(line, repo)),
