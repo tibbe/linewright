@@ -745,8 +745,8 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
         "/items/1".to_string(),
         format!("https://github.com/{REPO}/issues/1"),
     ];
-    assert_eq!((row[2].as_str(), &cell_links), ("#1: Ship gh", &links));
-    assert_eq!(item_line(&html), ("#1: Ship gh".to_string(), links));
+    assert_eq!((row[2].as_str(), &cell_links), ("Ship gh #1", &links));
+    assert_eq!(item_line(&html), ("Ship gh #1".to_string(), links));
 }
 
 /// `docs/specs/runs.md`, Run, Heading, kept up by the page's stream.
@@ -763,7 +763,7 @@ async fn the_run_pages_stream_sends_its_heading_with_its_item_under_it() {
     let first = regions(&first);
     let (_, heading) = first.iter().find(|(id, _)| id == "heading").unwrap();
     assert_eq!(text(select(heading, "h1")[0]), "1/implement-1");
-    assert_eq!(text(select(heading, ".line")[0]), "#1: Ship gh");
+    assert_eq!(text(select(heading, ".line")[0]), "Ship gh #1");
 }
 
 #[test_log::test(tokio::test)]
@@ -871,7 +871,7 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
     let (item, links) = item_line(&html);
     assert_eq!(
         (item.as_str(), links[0].as_str()),
-        ("#2: Pull 2", "/items/2")
+        ("Pull 2 #2", "/items/2")
     );
     assert_eq!(select(&html, "#transcript .entry").len(), 0);
     assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));

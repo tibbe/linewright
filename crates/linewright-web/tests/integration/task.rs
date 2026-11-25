@@ -79,7 +79,7 @@ async fn a_task_shows_its_name_and_stage_its_facts_and_the_whole_of_its_criteria
             ("Captured from".to_string(), "1130/implement-1".to_string()),
             (
                 "Item".into(),
-                "#1130: Spec change: Show no working line between turns".into()
+                "Spec change: Show no working line between turns #1130".into()
             ),
             ("Started".into(), "2026-10-13 10:00:00 UTC".into()),
         ]

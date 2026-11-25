@@ -11,7 +11,7 @@
 {%- for card in cell.cards %}
 <li class="{% call ui::card_look("bg-base-100") %}{% endcall %} card-sm{% call toned(card.status) %}{% endcall %}{% if card.quiet %} opacity-60{% endif %}">
 <div class="card-body gap-1">
-<h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{{ crate::icons::item_kind_svg(card.kind) }}{{ card.heading|safe }}</h3>
+<h3 class="card-title gap-[0.25em] text-sm">{{ crate::icons::item_kind_svg(card.kind) }}{{ card.name }}</h3>
 {%- if let Some(line) = card.line %}
 <p class="line text-base-content/60">{% if let Some(status) = card.status %}{% call ui::icon(crate::icons::status_icon(status), crate::icons::IconSize::Text, "text-base-content") %}{% endcall %}{% endif %}{{ line|safe }}</p>
 {%- endif %}
@@ -23,12 +23,12 @@
 </div>
 {%- endmacro -%}
 {#- A lane's head, sticky under the column heads while the reader is in
-    its lane, and its text sticky at the left as the board scrolls
-    sideways, cut to the board's visible width less the lane's padding on
-    each side so that it can stay there inside its lane, and whole in the
-    page's tooltip while it is cut (`docs/specs/ui_patterns.md`, Layout). -#}
+    its lane, and its line sticky at the left as the board scrolls
+    sideways, as wide at most as the board's visible width less the lane's
+    padding on each side so that it can stay there inside its lane, its
+    title cut to fit (`docs/specs/board.md`, Lanes). -#}
 {%- macro lane_head(lane) -%}
-<span class="name-cut-1 sticky left-2 max-w-[calc(100cqw-2*--spacing(2))] align-top" data-tip-cut>{{ lane.head|safe }}</span>
+<span class="sticky left-2 flex w-fit max-w-[calc(100cqw-2*--spacing(2))] items-center">{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {#- The classes of a lane. -#}
 {%- macro lane_look() -%}

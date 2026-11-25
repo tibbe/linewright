@@ -233,13 +233,19 @@ fn icon_name(icon: ElementRef) -> String {
 /// The classes the spec gives an icon where it sits
 /// (`docs/specs/design_system.md`, Icons): the size daisyUI's examples give
 /// it in the component nearest round it, `size-5` before a `card-title`
-/// (`docs/specs/components.md`, Card with icon), `size-4` as a transcript's
-/// chevron (`docs/specs/components.md`, Transcript), and otherwise, in a
-/// line of text, `size-[1em]`, centred on the line.
+/// (`docs/specs/components.md`, Card with icon) but a board card's, which is
+/// in a line of text (`docs/specs/board.md`, Cards, Its look), `size-4` as
+/// a transcript's chevron (`docs/specs/components.md`, Transcript), and
+/// otherwise, in a line of text, `size-[1em]`, centred on the line.
 fn classes_where_it_sits(icon: ElementRef) -> &'static [&'static str] {
     let parent = ElementRef::wrap(icon.parent().unwrap()).unwrap();
+    let on_the_board = icon
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .any(|ancestor| ancestor.value().id() == Some("board"));
     if has_classes(parent, &["card-title"])
         && parent.children().find_map(ElementRef::wrap) == Some(icon)
+        && !on_the_board
     {
         return &["size-5"];
     }
@@ -321,7 +327,7 @@ async fn only_the_cards_their_screens_give_an_icon_have_one() {
     assert_eq!(
         titles,
         [
-            card("/items/1", "#1: Ship gh", Some("issue-opened")),
+            card("/items/1", "Ship gh #1", Some("issue-opened")),
             card("/items/1", "Runs", Some("command-line")),
             card(
                 "/runs/1/triage-1",
@@ -396,8 +402,7 @@ async fn each_button_has_its_icon_before_its_label() {
 }
 
 /// The button that opens the navigation (`docs/specs/shell.md`, Navigation,
-/// Opening it), a link to GitHub at the end of a name
-/// (`docs/specs/ui_patterns.md`, Layout) and "Lost `serve`"
+/// Opening it) and "Lost `serve`"
 /// (`docs/specs/shell.md`, "Lost `serve`") each have their icon.
 #[test_log::test(tokio::test)]
 async fn the_shells_parts_have_their_icons() {
@@ -407,7 +412,6 @@ async fn the_shells_parts_have_their_icons() {
 
     for (selector, icon) in [
         ("label.drawer-button > svg", "bars-3"),
-        ("#runs a.github > svg", "arrow-top-right-on-square"),
         ("#lost > svg:first-child", "signal-slash"),
     ] {
         let icons = select(&html, selector);

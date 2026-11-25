@@ -17,6 +17,7 @@ use linewright_core::benchmarks::{CriteriaAnswer, TaskId};
 
 use super::buttons::{ScreenButton, Verb};
 use super::caller::Reader;
+use super::components::{Fit, ItemName};
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
@@ -77,7 +78,12 @@ impl TaskView {
                     title,
                     started_at,
                 } => ItemAndStart::Read {
-                    item: html::titled(*item, title, repo),
+                    item: html::rendered(&ItemName {
+                        number: *item,
+                        title,
+                        repo,
+                        fit: Fit::Wrap,
+                    }),
                     started: html::time(*started_at),
                 },
                 TaskFactsScreen::Unreadable { facts_unreadable } => {

@@ -14,6 +14,7 @@ use linewright_core::status;
 
 use super::caller::Reader;
 use super::cards::{self, lane_head, line_html};
+use super::components::{Fit, ItemName, ItemNumber};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::icons::CardIcon;
@@ -40,8 +41,13 @@ impl ItemShown {
 /// Heading).
 fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
     Heading {
-        title: format!("{} {}", facts.number, facts.title),
-        name: html::titled(facts.number, &facts.title, repo),
+        title: format!("{} {}", facts.title, facts.number),
+        name: html::rendered(&ItemName {
+            number: facts.number,
+            title: &facts.title,
+            repo,
+            fit: Fit::Wrap,
+        }),
         icon: Some(CardIcon::Item(ItemKind::of(facts.pull_request))),
         state: None,
         line: Some(html::escape("as of ").then(&html::time(facts.last_read))),
@@ -137,7 +143,7 @@ fn state(facts: &ItemFactsScreen, naming: &Naming) -> Vec<Piece> {
     pieces
 }
 
-/// An item a fact lists, as its card is: its heading as a card's is, or its
+/// An item a fact lists, as its card is: its item name on one line, or its
 /// number alone where its title is not known; or a tracking issue as its
 /// lane's head is, with no card status.
 fn related(item: &RelatedScreen, repo: &str) -> Piece {
@@ -150,9 +156,18 @@ fn related(item: &RelatedScreen, repo: &str) -> Piece {
         } => Piece::Item {
             status: status.map(cards::status),
             kind: ItemKind::of(*pull_request),
-            heading: match title {
-                Some(title) => html::titled(*number, title, repo),
-                None => html::item(*number, repo),
+            name: match title {
+                Some(title) => html::rendered(&ItemName {
+                    number: *number,
+                    title,
+                    repo,
+                    fit: Fit::OneLine,
+                }),
+                None => html::rendered(&ItemNumber {
+                    number: *number,
+                    repo,
+                    kind: None,
+                }),
             },
         },
         RelatedScreen::LaneHead(lane) => Piece::LaneHead(lane_head(lane, repo)),

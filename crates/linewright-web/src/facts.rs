@@ -21,12 +21,12 @@ pub(super) enum Piece<Words = Html> {
         words: Words,
     },
     /// An item as its card is (`docs/specs/board.md`, Item,
-    /// Related items): its card status's icon, if it has one, then the
-    /// icon of an issue or a pull request, then its heading.
+    /// Related items): the icon of an issue or a pull request, then its card
+    /// status's icon, if it has one, then its name.
     Item {
         status: Option<Status>,
         kind: ItemKind,
-        heading: Words,
+        name: Words,
     },
     /// A tracking issue as its lane's head is.
     LaneHead(Words),
@@ -50,14 +50,10 @@ impl<Words> Fact<Words> {
                                 status,
                                 words: draw(words),
                             },
-                            Piece::Item {
+                            Piece::Item { status, kind, name } => Piece::Item {
                                 status,
                                 kind,
-                                heading,
-                            } => Piece::Item {
-                                status,
-                                kind,
-                                heading: draw(heading),
+                                name: draw(name),
                             },
                             Piece::LaneHead(heading) => Piece::LaneHead(draw(heading)),
                             Piece::Markup(markup) => Piece::Markup(markup),

@@ -119,7 +119,7 @@ async fn every_screen_shows_its_crumbs_and_its_h1_and_is_titled_by_its_heading()
     let benchmark_run = || link("Benchmark run 1", "/benchmark-runs/1");
 
     for (path, names, named, shown) in [
-        ("/items/1", vec![], "#1: Ship gh", "#1 Ship gh · Linewright"),
+        ("/items/1", vec![], "Ship gh #1", "Ship gh #1 · Linewright"),
         (
             "/runs",
             vec![link("Runs", "/runs"), here("All runs")],
@@ -239,7 +239,7 @@ async fn each_screen_of_one_thing_has_a_heading_card_and_no_other_screen_has_one
             Some(card(
                 "1/triage-1 (it started no session)",
                 &[],
-                Some("#1: Ship gh"),
+                Some("Ship gh #1"),
             )),
         ),
     ] {
@@ -248,7 +248,7 @@ async fn each_screen_of_one_thing_has_a_heading_card_and_no_other_screen_has_one
         assert_eq!(heading(&html), shown, "{path}");
     }
     let item = heading(&pages.page("/items/1").await).unwrap();
-    assert_eq!(item.name, "#1: Ship gh");
+    assert_eq!(item.name, "Ship gh #1");
     assert!(
         item.line
             .as_ref()
@@ -471,10 +471,10 @@ async fn an_items_heading_and_title_follow_a_change_of_its_title_through_its_str
 
     let changed = regions(&changed);
     let heading = region_of(&changed, "heading");
-    assert_eq!(text(select(heading, "h1.card-title")[0]), "#1: Ship it");
+    assert_eq!(text(select(heading, "h1.card-title")[0]), "Ship it #1");
     assert_eq!(
         title(region_of(&changed, "title")),
-        "#1 Ship it · Linewright"
+        "Ship it #1 · Linewright"
     );
 }
 
