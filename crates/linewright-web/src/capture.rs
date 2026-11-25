@@ -121,7 +121,7 @@ impl Form for CaptureFields {
 impl CaptureFields {
     /// The benchmark chosen and the task, or else the refusal of each field
     /// that does not hold one (`docs/specs/runs.md`, Run, Capturing;
-    /// `docs/specs/ui_patterns.md`, Making, Required).
+    /// `docs/specs/components.md`, Form dialog, Required).
     fn checked(&self) -> Result<(BenchmarkChoice, Task), FieldRefusals<CaptureField>> {
         let choice = if self.benchmark.is_empty() {
             making::parse_name(&self.new_benchmark)
@@ -256,7 +256,7 @@ impl TaskFields {
     /// (<https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element>),
     /// or else the refusal of each field that does not hold its part
     /// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
-    /// `docs/specs/ui_patterns.md`, Making, Required).
+    /// `docs/specs/components.md`, Form dialog, Required).
     pub(super) fn checked(&self) -> Result<Task, FieldRefusals<TaskField>> {
         let name =
             making::parse_name(&self.name).map_err(|why| FieldRefusals::of(TaskField::Name, why));
@@ -403,7 +403,7 @@ impl NotCaptured {
     /// The status the capture into `choice` that did not happen is answered
     /// with, and its refusal in a dialog of the fields `F`
     /// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
-    /// `docs/specs/ui_patterns.md`, Making, A refusal): a taken name under
+    /// `docs/specs/components.md`, Form dialog, A refusal): a taken name under
     /// the task's name, a benchmark taken or gone under the field that chose
     /// it, where there is one, and the rest above the buttons.
     pub(super) fn refusal<F: CapturingField>(

@@ -94,8 +94,7 @@ async fn list_benchmarks_lists_them_by_name_narrowed_and_100_or_limit_at_a_time(
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark: its benchmark runs, latest
-/// first, and its tasks; `docs/specs/ui_patterns.md`, Screen states,
-/// Nothing there.
+/// first, and its tasks; `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
 async fn get_benchmark_returns_its_benchmark_runs_and_tasks() {
     let pages = with_benchmark_run().await;

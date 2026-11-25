@@ -1,6 +1,6 @@
-//! A confirmation (`docs/specs/ui_patterns.md`, Confirming): an action
+//! A confirmation (`docs/specs/components.md`, Confirmation): an action
 //! that asks first, in a daisyUI `modal` over the page
-//! (`docs/specs/ui_patterns.md`, Dialogs), drawn by the
+//! (`docs/specs/components.md`, Dialog), drawn by the
 //! `confirm_dialog` macro and opened by a button that names its `id`.
 
 use super::buttons::Verb;

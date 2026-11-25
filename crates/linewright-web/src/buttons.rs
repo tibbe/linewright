@@ -1,7 +1,8 @@
-//! What a button is (`docs/specs/ui_patterns.md`, Words, Buttons;
-//! `docs/specs/ui_patterns.md`, Buttons, Making and Icons), and the
-//! buttons a screen gives for itself, which the shell draws
-//! (`docs/specs/shell.md`, The screen's buttons).
+//! What a button is (`docs/specs/design_system.md`, Words, Buttons;
+//! `docs/specs/components.md`, Button and Form dialog;
+//! `docs/specs/design_system.md`, Buttons, Icons), and the buttons a screen
+//! gives for itself, which the shell draws (`docs/specs/shell.md`, The screen's
+//! buttons).
 
 use linewright_core::actions::Action;
 

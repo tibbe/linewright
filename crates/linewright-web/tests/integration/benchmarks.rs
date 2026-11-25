@@ -35,8 +35,7 @@ pub(super) async fn with_benchmarks() -> Pages {
     pages
 }
 
-/// `docs/specs/benchmarks.md`, Benchmarks; `docs/specs/ui_patterns.md`,
-/// Tables.
+/// `docs/specs/benchmarks.md`, Benchmarks; `docs/specs/components.md`, Table.
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_page_shows_a_row_per_benchmark_viewed_from_its_end_in_a_card_with_its_filters_and_no_name()
  {
@@ -88,7 +87,7 @@ async fn the_benchmarks_page_shows_a_row_per_benchmark_viewed_from_its_end_in_a_
     assert_eq!(events_path(&html), Some("/events/benchmarks"));
 }
 
-/// `docs/specs/ui_patterns.md`, Screen states, Empty.
+/// `docs/specs/components.md`, Table, Empty.
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_page_with_no_benchmarks_says_so() {
     let pages = Pages::of(view(vec![], vec![])).await;
@@ -99,7 +98,7 @@ async fn the_benchmarks_page_with_no_benchmarks_says_so() {
 }
 
 /// `docs/specs/benchmarks.md`, Benchmarks, Filters;
-/// `docs/specs/ui_patterns.md`, Filters.
+/// `docs/specs/components.md`, Filters.
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pages_link_and_stream()
 {
@@ -136,7 +135,7 @@ async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pag
     assert_eq!(stages, ["All stages", "triage", "design", "implement"]);
 }
 
-/// `docs/specs/ui_patterns.md`, Tables, Pages.
+/// `docs/specs/components.md`, Table, Pages.
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_page_shows_its_benchmarks_25_at_a_time_its_link_carrying_the_page_and_the_filters()
  {
@@ -196,7 +195,7 @@ async fn the_benchmarks_page_shows_its_benchmarks_25_at_a_time_its_link_carrying
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Filters: a filter that searches.
+/// `docs/specs/benchmarks.md`, Benchmarks, Name: a filter that searches.
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_name_filter_is_a_search_with_a_magnifier_at_its_start_taking_the_spare_width()
  {
@@ -239,8 +238,8 @@ async fn the_benchmarks_pages_stream_sends_the_benchmarks_its_filters_keep() {
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Pages: a screen is at the address its section
-/// gives it, and at no other.
+/// `docs/specs/design_system.md`, Screens, Pages: a screen is at the address
+/// its section gives it, and at no other.
 #[test_log::test(tokio::test)]
 async fn suites_and_experiments_are_at_no_address() {
     let pages = with_benchmarks().await;
@@ -272,8 +271,8 @@ async fn a_stage_to_filter_on_that_is_not_a_benchmarks_says_so_in_place_of_the_b
     );
 }
 
-/// `docs/specs/benchmarks.md`, New benchmark; `docs/specs/ui_patterns.md`,
-/// Dialogs and Making.
+/// `docs/specs/benchmarks.md`, New benchmark; `docs/specs/components.md`,
+/// Dialog and Form dialog.
 #[test_log::test(tokio::test)]
 async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and_stage_on_triage() {
     let pages = with_benchmarks().await;
@@ -360,7 +359,7 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
     assert_eq!(buttons[1].attr("type"), Some("submit"));
 }
 
-/// `docs/specs/ui_patterns.md`, Making.
+/// `docs/specs/components.md`, Form dialog, Done.
 #[test_log::test(tokio::test)]
 async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and_the_stream_then_sends_it()
  {
@@ -403,7 +402,7 @@ async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark, Refusals;
-/// `docs/specs/ui_patterns.md`, Making, Required, A field and A refusal:
+/// `docs/specs/components.md`, Form dialog, Required, A field and A refusal:
 /// each refusal of a field is under it, and one of no field above the
 /// buttons.
 #[test_log::test(tokio::test)]
@@ -486,7 +485,7 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_each_reason_in_its_pl
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Tables, Pages: each of Benchmark's tables
+/// `docs/specs/components.md`, Table, Pages: each of Benchmark's tables
 /// has its own page, which its link carries beside the other's.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_of_their_own() {
@@ -638,7 +637,7 @@ pub(super) fn open_tabs(html: &Html) -> Vec<(String, bool)> {
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark, Heading and Tabs;
-/// `docs/specs/ui_patterns.md`, Tabs, Addresses.
+/// `docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_while_it_has_no_benchmark_runs()
  {
@@ -682,8 +681,8 @@ async fn the_benchmark_page_opens_on_benchmark_runs_once_it_has_one() {
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Tabs, Addresses and Links: each tab is at its
-/// own address, whatever the page opens on without one.
+/// `docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses and Links: each tab
+/// is at its own address, whatever the page opens on without one.
 #[test_log::test(tokio::test)]
 async fn each_tab_of_the_benchmark_page_opens_at_its_own_address() {
     let launched_on = with_benchmarks().await;
@@ -710,8 +709,8 @@ async fn each_tab_of_the_benchmark_page_opens_at_its_own_address() {
     }
 }
 
-/// `docs/specs/ui_patterns.md`, Tabs, Addresses: a segment that names no tab is
-/// an unknown page.
+/// `docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses: a segment that names
+/// no tab is an unknown page.
 #[test_log::test(tokio::test)]
 async fn a_benchmark_tab_that_does_not_exist_is_no_page() {
     let pages = with_benchmarks().await;
@@ -733,7 +732,7 @@ async fn a_benchmark_tab_that_does_not_exist_is_no_page() {
     assert_eq!(text(select(&html, "main #tasks")[0]), "No such benchmark 9");
 }
 
-/// `docs/specs/ui_patterns.md`, Tabs, Links: a tab's link carries the
+/// `docs/specs/benchmarks.md`, Benchmark, Tabs, Links: a tab's link carries the
 /// page's pages, and its tables' page links go to their own tab's address.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_tab_links_carry_its_pages_and_open_on_the_page_asked_for() {
@@ -821,7 +820,7 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     assert_eq!(tasks(&pages), ["1", "2"]);
 }
 
-/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
+/// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
 async fn the_page_of_no_benchmark_says_there_is_none() {
     let pages = with_benchmarks().await;
@@ -867,8 +866,8 @@ async fn a_benchmark_that_does_not_exist_answers_404() {
     assert_eq!(tasks(&pages), ["1", "2"]);
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark, Tasks; `docs/specs/ui_patterns.md`,
-/// Tables.
+/// `docs/specs/benchmarks.md`, Benchmark, Tasks; `docs/specs/components.md`,
+/// Table.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line_of_its_criteria_and_its_run()
  {
@@ -910,7 +909,7 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
 
 /// `docs/specs/benchmarks.md`, Benchmark, Tasks, and Task: a task's row opens
 /// Task by "View" at its end, and opens nothing in place;
-/// `docs/specs/ui_patterns.md`, Tables, A row's screen.
+/// `docs/specs/components.md`, Table, A row's screen.
 #[test_log::test(tokio::test)]
 async fn a_tasks_row_opens_its_task_by_view_and_nothing_in_place() {
     let pages = with_benchmarks().await;
@@ -940,7 +939,7 @@ async fn a_tasks_row_opens_its_task_by_view_and_nothing_in_place() {
     assert_eq!(confirmations(&html), []);
 }
 
-/// `docs/specs/ui_patterns.md`, Screen states, Empty;
+/// `docs/specs/components.md`, Table, Empty;
 /// `docs/specs/benchmarks.md`, New task, Fields.
 #[test_log::test(tokio::test)]
 async fn a_benchmark_with_no_tasks_benchmark_runs_or_runs_of_its_stage_says_so() {
@@ -1040,8 +1039,8 @@ fn new_task_form(form: &Html) -> FormShown<'_> {
     (shown.values, shown.whole)
 }
 
-/// `docs/specs/benchmarks.md`, New task; `docs/specs/ui_patterns.md`,
-/// Dialogs and Making.
+/// `docs/specs/benchmarks.md`, New task; `docs/specs/components.md`, Dialog and
+/// Form dialog.
 #[test_log::test(tokio::test)]
 async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage_that_can_be_captured()
  {
@@ -1119,8 +1118,8 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
     assert!(actions[1].attr("disabled").is_none());
 }
 
-/// `docs/specs/benchmarks.md`, New task; `docs/specs/ui_patterns.md`,
-/// Making.
+/// `docs/specs/benchmarks.md`, New task; `docs/specs/components.md`, Form
+/// dialog, Done.
 #[test_log::test(tokio::test)]
 async fn adding_a_task_answers_the_form_as_it_starts_closing_the_dialog_and_the_task_shows_last() {
     let pages = with_runs().await;
@@ -1173,7 +1172,7 @@ struct Case {
 }
 
 /// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
-/// `docs/specs/ui_patterns.md`, Making, Required and A refusal: each
+/// `docs/specs/components.md`, Form dialog, Required and A refusal: each
 /// refusal of a field is under it, every empty required field at once, and a
 /// refusal of the run above the buttons.
 #[test_log::test(tokio::test)]
@@ -1528,10 +1527,10 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
     );
 }
 
-/// `docs/specs/design_system.md`, Type and Colour; `docs/specs/ui_patterns.md`,
-/// Type and Status: a task whose criteria do not read says so in secondary text
-/// after `failed`'s icon, never in text coloured `error`, whose fill is drawn
-/// only behind its content colour.
+/// `docs/specs/design_system.md`, Additional design tokens, Colour and Status:
+/// a task whose criteria do not read says so in secondary text after `failed`'s
+/// icon, never in text coloured `error`, whose fill is drawn only behind its
+/// content colour.
 #[test_log::test(tokio::test)]
 async fn a_task_whose_criteria_do_not_read_says_so_in_secondary_text_after_faileds_icon() {
     let pages = with_benchmarks().await;
@@ -1560,8 +1559,8 @@ async fn a_task_whose_criteria_do_not_read_says_so_in_secondary_text_after_faile
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Making: the reason for a refusal is a
-/// daisyUI `alert` in the `alert-error` style, as daisyUI draws it.
+/// `docs/specs/components.md`, Form dialog, A refusal: the reason for a refusal
+/// is a daisyUI `alert` in the `alert-error` style, as daisyUI draws it.
 #[test_log::test(tokio::test)]
 async fn a_refused_writes_answer_is_an_error_alert_as_daisyui_draws_it() {
     let pages = with_benchmarks().await;
@@ -1671,8 +1670,8 @@ async fn benchmarks_named_in_plain_words_are_listed_by_the_unicode_collation_alg
 
 /// The dialog "Edit" opens on `html`: its button among the screen's buttons,
 /// a plain `btn` with `pencil-square` before its label
-/// (`docs/specs/ui_patterns.md`, Editing and Icons), and the form of
-/// the dialog it opens.
+/// (`docs/specs/design_system.md`, Actions, Changing, and Buttons, Icons), and
+/// the form of the dialog it opens.
 pub(super) fn edit_dialog(html: &Html) -> ElementRef<'_> {
     let edit: Vec<ElementRef> = select(html, "#buttons button")
         .into_iter()
@@ -1698,10 +1697,10 @@ pub(super) fn edit_dialog(html: &Html) -> ElementRef<'_> {
     dialog[0]
 }
 
-/// A dialog's form drawn as Editing says (`docs/specs/ui_patterns.md`,
-/// Editing, The dialog; `docs/specs/ui_patterns.md`, Editing): titled
-/// `title`, with the fields `labels` above them, then "Cancel" and "Save",
-/// posting to `action`, and what its form holds.
+/// A dialog's form drawn as Editing says (`docs/specs/components.md`, Edit
+/// dialog and Form dialog): titled `title`, with the fields `labels` above
+/// them, then "Cancel" and "Save", posting to `action`, and what its form
+/// holds.
 pub(super) fn edit_form(
     dialog: ElementRef<'_>,
     title: &str,
@@ -1738,8 +1737,8 @@ pub(super) fn edit_form(
     Html::parse_fragment(&form.inner_html())
 }
 
-/// `docs/specs/benchmarks.md`, Edit benchmark; `docs/specs/ui_patterns.md`,
-/// Editing, Edit and The dialog.
+/// `docs/specs/benchmarks.md`, Edit benchmark; `docs/specs/design_system.md`,
+/// Actions, Changing, and `docs/specs/components.md`, Edit dialog.
 #[test_log::test(tokio::test)]
 async fn edit_opens_the_edit_benchmark_dialog_holding_its_name() {
     let pages = with_benchmarks().await;
@@ -1762,7 +1761,7 @@ async fn edit_opens_the_edit_benchmark_dialog_holding_its_name() {
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Editing, Saving: the dialog closes holding
+/// `docs/specs/components.md`, Form dialog, Done: the dialog closes holding
 /// what was saved, and the screen shows the new name.
 #[test_log::test(tokio::test)]
 async fn saving_a_benchmarks_name_closes_the_dialog_and_the_screen_shows_it() {
@@ -1812,8 +1811,8 @@ async fn saving_a_benchmarks_name_closes_the_dialog_and_the_screen_shows_it() {
 }
 
 /// `docs/specs/benchmarks.md`, Edit benchmark, Refusals;
-/// `docs/specs/ui_patterns.md`, Editing, Required and refused, and A thing
-/// that is gone.
+/// `docs/specs/components.md`, Form dialog, Required and A refusal, and Edit
+/// dialog, A thing that is gone.
 #[test_log::test(tokio::test)]
 async fn a_refused_benchmark_name_keeps_what_the_reader_typed_with_its_reason() {
     let pages = with_benchmarks().await;

@@ -776,7 +776,7 @@ fn icons(element: ElementRef) -> Vec<String> {
 const OFF_THE_BOARD: u64 = 9;
 
 /// `docs/specs/board.md`, Cards, Card status, and
-/// `docs/specs/ui_patterns.md`, Status: waiting for a person shows as
+/// `docs/specs/design_system.md`, Status: waiting for a person shows as
 /// waiting, which is `warning`.
 const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 
@@ -805,7 +805,7 @@ async fn a_lane_head_shows_no_status_of_its_own() {
 }
 
 /// `docs/specs/board.md`, Cards, Card status, and
-/// `docs/specs/ui_patterns.md`, Status: paused or queued shows as
+/// `docs/specs/design_system.md`, Status: paused or queued shows as
 /// paused, which is `base-content/60`.
 const PAUSED_OR_QUEUED: &str =
     "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]";
@@ -848,8 +848,8 @@ async fn a_card_paused_for_the_usage_limit_shows_its_column_line_tone_and_icons(
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/design_system.md`, Type: secondary text is in
-/// `text-base-content/60`.
+/// `docs/specs/design_system.md`, Additional design tokens: secondary text is
+/// in `text-base-content/60`.
 #[test_log::test(tokio::test)]
 async fn a_cards_line_under_its_title_is_in_secondary_text() {
     let pages = Pages::of(a_board()).await;

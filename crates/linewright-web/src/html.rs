@@ -39,7 +39,7 @@ pub(crate) fn rendered(template: &impl askama::Template) -> Html {
 }
 
 /// `phrase` as HTML (`docs/specs/board.md`, Item, Items in Waiting for and
-/// in what keeps #N out, and `docs/specs/ui_patterns.md`, Time): an item is named as `naming` names it,
+/// in what keeps #N out, and `docs/specs/design_system.md`, Times): an item is named as `naming` names it,
 /// a time and a duration are `<time>` elements holding the text the commands
 /// print, and a label or a command is code.
 pub(crate) fn phrase(phrase: &Phrase, naming: &Naming) -> Html {
@@ -82,7 +82,8 @@ pub(crate) fn span(class: &str, content: &Html) -> Html {
     ))
 }
 
-/// `at` as a focusable `<time>` (`docs/specs/ui_patterns.md`, Layout).
+/// `at` as a focusable `<time>` (`docs/specs/design_system.md`, Layout, Hover
+/// and focus).
 pub(crate) fn time(at: Timestamp) -> Html {
     Html(format!(
         r#"<time datetime="{}" tabindex="0">{}</time>"#,

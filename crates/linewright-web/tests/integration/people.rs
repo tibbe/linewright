@@ -338,7 +338,7 @@ async fn next_sending(
     .unwrap_or_else(|_| panic!("no {id} in time"))
 }
 
-/// `docs/specs/ui_patterns.md`, Liveness; `docs/specs/access.md`, Roles,
+/// `docs/specs/design_system.md`, Screens, Live; `docs/specs/access.md`, Roles,
 /// At each request: a row People gains has its dialogs, and a reader made
 /// a manager gets the buttons, without opening People again.
 #[test_log::test(tokio::test)]

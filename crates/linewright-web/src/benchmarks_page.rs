@@ -292,7 +292,8 @@ async fn listed(
 }
 
 /// The benchmarks page, its stream's narrowed as `narrowing` says, with
-/// "New" among the screen's buttons (`docs/specs/ui_patterns.md`, Making).
+/// "New" among the screen's buttons (`docs/specs/benchmarks.md`, Benchmarks,
+/// New).
 fn page(narrowing: &Narrowing, navigation: Navigation) -> Page {
     Page::new(
         Place::Navigation(Area::Benchmarks),
@@ -365,7 +366,7 @@ struct MakeForm {
 impl MakeForm {
     /// The name and stage it sends, or the refusal of each field that does
     /// not hold one (`docs/specs/benchmarks.md`, New benchmark, Refusals;
-    /// `docs/specs/ui_patterns.md`, Making, Required).
+    /// `docs/specs/components.md`, Form dialog, Required).
     fn checked(&self) -> Result<(Name, TaskStage), FieldRefusals<NewBenchmarkField>> {
         let name = making::parse_name(&self.name);
         let stage = self.stage.parse::<TaskStage>();

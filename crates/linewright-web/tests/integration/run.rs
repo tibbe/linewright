@@ -217,8 +217,8 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     assert_eq!(icons, [Some("chevron-right"), Some("chevron-down")]);
 }
 
-/// `docs/specs/design_system.md`, Type: secondary text is in
-/// `text-base-content/60`.
+/// `docs/specs/design_system.md`, Additional design tokens: secondary text is
+/// in `text-base-content/60`.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_sessions_settings_and_each_entrys_duration_in_secondary_text() {
     let pages = implemented_as_recorded().await;
@@ -908,7 +908,7 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
     assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));
 }
 
-/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
+/// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
 async fn the_page_of_no_run_says_there_is_none() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;

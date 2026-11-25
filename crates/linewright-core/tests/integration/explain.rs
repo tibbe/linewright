@@ -363,7 +363,7 @@ fn explain_shows_the_run_in_flight_with_how_long_it_has_run_then_the_past_runs_a
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Time, Durations.
+/// `docs/specs/design_system.md`, Times, Durations.
 #[test_log::test]
 fn explain_shows_how_long_the_run_in_flight_has_run_to_its_two_largest_units() {
     let answer = explain(

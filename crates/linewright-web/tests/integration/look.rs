@@ -1,6 +1,7 @@
 //! How the screens are drawn: their cards, the content panel and its
-//! spacing, and the sidebar (`docs/specs/ui_patterns.md`, Cards and
-//! Layout; `docs/specs/shell.md`, Navigation and The content).
+//! spacing, and the sidebar (`docs/specs/components.md`, Card, and
+//! `docs/specs/design_system.md`, Layout; `docs/specs/shell.md`, Navigation and
+//! The content).
 
 use super::shell::with_a_run;
 use super::*;
@@ -70,7 +71,7 @@ pub(super) fn assert_drawn_as_a_card(element: ElementRef<'_>, colour: &str, cont
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Cards: a card is a daisyUI `card` in
+/// `docs/specs/components.md`, Card: a card is a daisyUI `card` in
 /// `bg-base-200`, with daisyUI's `shadow-xs` and no border. Tables, the
 /// heading, Item's and Server's facts, Benchmark run's `stats` and its chart
 /// are each such a card (`docs/specs/benchmarks.md`, Benchmark run;
@@ -350,8 +351,8 @@ async fn only_the_cards_their_screens_give_an_icon_have_one() {
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Buttons, Icons: each button the table names has
-/// its icon before its label. A "Cancel" that cancels work opens its
+/// `docs/specs/design_system.md`, Buttons, Icons: each button the table names
+/// has its icon before its label. A "Cancel" that cancels work opens its
 /// confirmation, and one that closes a dialog closes it.
 #[test_log::test(tokio::test)]
 async fn each_button_has_its_icon_before_its_label() {
@@ -481,8 +482,7 @@ async fn the_chart_is_in_a_card_titled_by_its_axis_running_to_its_edges() {
     );
 }
 
-/// `docs/specs/shell.md`, The content, and
-/// `docs/specs/components.md`, Content panel: the content is a panel in
+/// `docs/specs/shell.md`, The content: the content is a panel in
 /// `bg-base-100`, `p-4`, or `p-10` from `lg`, and from `lg` with `mt-2` above
 /// it, a `border-base-300` border along its top and start and its top start corner
 /// `rounded-ss-4xl` in a squircle. The parts of a screen are `gap-6` apart.
@@ -582,7 +582,7 @@ async fn the_sidebar_is_in_base_200_with_the_specs_spacing_and_daisyuis_menu() {
     }
 }
 
-/// `docs/specs/ui_patterns.md`, Status: a status's badge is a daisyUI
+/// `docs/specs/components.md`, Status badge: a status's badge is a daisyUI
 /// `badge`, `badge-sm`, with the icon first.
 #[test_log::test(tokio::test)]
 async fn every_status_badge_is_a_small_badge_with_its_icon_first() {
@@ -608,7 +608,7 @@ async fn every_status_badge_is_a_small_badge_with_its_icon_first() {
     assert_ne!(badges, 0);
 }
 
-/// `docs/specs/ui_patterns.md`, Tables, Scrolling: a table is in a
+/// `docs/specs/components.md`, Table, Scrolling: a table is in a
 /// wrapper with `overflow-x-auto`, and as it scrolls sideways the top of its
 /// card and its filters stay in place, outside every wrapper that scrolls.
 #[test_log::test(tokio::test)]
@@ -636,7 +636,7 @@ async fn every_table_scrolls_sideways_in_its_wrapper_under_its_cards_top_and_fil
     }
 }
 
-/// `docs/specs/shell.md`, The name at the top: the name at the top of the
+/// `docs/specs/shell.md`, The repository's name: the name at the top of the
 /// content is in `text-xl` and `font-light`, in secondary text.
 #[test_log::test(tokio::test)]
 async fn the_name_at_the_top_is_large_and_light_in_secondary_text() {
@@ -676,9 +676,10 @@ async fn runs_verbose_switch_is_a_toggle_and_its_jump_a_button_fixed_at_the_bott
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Buttons and Making: every button, the
-/// navigation's and the dialogs' too, is a small `btn-sm`, but a row's,
-/// which is a `btn-xs`; and "New" is a `btn-primary`, wherever it is.
+/// `docs/specs/components.md`, Button and Row button, and
+/// `docs/specs/benchmarks.md`, Benchmarks, New: every button, the navigation's
+/// and the dialogs' too, is a small `btn-sm`, but a row's, which is a `btn-xs`;
+/// and "New" is a `btn-primary`, wherever it is.
 #[test_log::test(tokio::test)]
 async fn every_button_is_small_and_new_is_primary() {
     let pages = with_a_run().await;

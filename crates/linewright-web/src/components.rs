@@ -56,10 +56,10 @@ impl CardTitle {
     }
 }
 
-/// A status's badge (`docs/specs/ui_patterns.md`, Status): the badge of the
-/// spec's table, `badge-sm`, holding the status's icon, then `word`, so
+/// A status's badge (`docs/specs/components.md`, Status badge): the badge of
+/// the spec's table, `badge-sm`, holding the status's icon, then `word`, so
 /// that it is never told by colour alone. Paused's is a paused badge
-/// (`docs/specs/components.md`, Paused badge). It is of class `tone`, which
+/// (`docs/specs/components.md`, Status badge). It is of class `tone`, which
 /// a badge that is no status's is not.
 #[derive(Template)]
 #[template(
@@ -117,8 +117,7 @@ mod tests {
     use super::super::html;
     use super::*;
 
-    /// `docs/specs/ui_patterns.md`, Status, and `docs/specs/components.md`,
-    /// Paused badge.
+    /// `docs/specs/components.md`, Status badge.
     #[test_log::test]
     fn a_status_badge_is_its_statuss_small_badge_with_its_icon_first() {
         let done = html::rendered(&StatusBadge::of(&Status::Done, "done")).to_string();

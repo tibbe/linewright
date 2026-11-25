@@ -598,7 +598,7 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
         .collect()
 }
 
-/// A confirmation (`docs/specs/ui_patterns.md`, Confirming) as a reader
+/// A confirmation (`docs/specs/components.md`, Confirmation) as a reader
 /// meets it: the label of the button that asks, the question, the label of
 /// the button that turns it down, and where going ahead posts and what.
 #[derive(Debug, PartialEq, Eq)]
@@ -695,8 +695,8 @@ fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
 
 /// Asserts that `selector` selects something in `html`, all of it in
 /// secondary text and in no other translucent text colour:
-/// `docs/specs/design_system.md`, Type: secondary text is in
-/// `text-base-content/60`.
+/// `docs/specs/design_system.md`, Additional design tokens: secondary text is
+/// in `text-base-content/60`.
 fn assert_in_secondary_text(html: &Html, selector: &str) {
     let selected = select(html, selector);
     assert!(!selected.is_empty(), "{selector}");
@@ -833,7 +833,7 @@ fn links_in(holder: ElementRef) -> Vec<(String, String)> {
 /// Asserts that `holder` holds an item's title and number on one line,
 /// with only its title cut to fit, whole in the page's tooltip while it is
 /// cut, and its number, in secondary text, always shown
-/// (`docs/specs/ui_patterns.md`, Layout).
+/// (`docs/specs/design_system.md`, Layout, Hover and focus).
 fn assert_cuts_only_the_title(holder: ElementRef) {
     let html = holder.html();
     let cut = select_in(holder, "[data-tip-cut]");
@@ -926,7 +926,7 @@ async fn with_ticket() -> World {
     world
 }
 
-/// An icon of a status (`docs/specs/ui_patterns.md`, Status).
+/// An icon of a status (`docs/specs/design_system.md`, Status).
 const STATUS_ICON: &str = "svg:is([data-icon=check-circle], [data-icon=x-circle], [data-icon=hand-raised], [data-icon=arrow-path], [data-icon=pause-circle], [data-icon=no-symbol])";
 
 /// Each status's icon beside the words it stands for, in its parent.
@@ -941,7 +941,7 @@ fn assert_no_status_by_colour_alone(html: &Html) {
     }
 }
 
-/// `docs/specs/ui_patterns.md`, Status, A badge's words: a badge within
+/// `docs/specs/components.md`, Status badge: a badge within
 /// `within` holds no reason or detail, here no words at all.
 fn assert_badges_hold_no_words(html: &Html, within: &str) {
     for badge in select(html, &format!("{within} .badge")) {
@@ -1051,7 +1051,7 @@ fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
         .collect()
 }
 
-/// A making dialog's form (`docs/specs/ui_patterns.md`, Making) as a reader
+/// A making dialog's form (`docs/specs/components.md`, Form dialog) as a reader
 /// meets it.
 #[derive(Debug, PartialEq, Eq)]
 struct MakingShown<'a> {
@@ -1134,7 +1134,7 @@ fn placed(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
     (shown.refused, shown.whole)
 }
 
-/// A table card (`docs/specs/ui_patterns.md`, Tables) as a reader reads
+/// A table card (`docs/specs/components.md`, Table) as a reader reads
 /// it: the name at the left of its top, if it shows one, the labels of the
 /// buttons at the right of its top, and the names of the filters in the row
 /// under the top, each in order.
@@ -1209,7 +1209,7 @@ fn unnamed_card(buttons: &[&str], filters: &[&str]) -> TableCard {
 }
 
 /// The links at the ends of the rows of the table `table` on `html`
-/// (`docs/specs/ui_patterns.md`, Tables, A row's screen), each as a reader
+/// (`docs/specs/components.md`, Table, A row's screen), each as a reader
 /// meets it: its text, its accessible name and where it goes.
 fn views(html: &Html, table: &str) -> Vec<(String, String, String)> {
     select(
@@ -1285,7 +1285,7 @@ async fn record_interrupted(pages: &Pages, item: u64, n: u32, started_at: &str) 
     pages.record(&record).await;
 }
 
-/// The pages under a table (`docs/specs/ui_patterns.md`, Tables, Pages), as
+/// The pages under a table (`docs/specs/components.md`, Table, Pages), as
 /// a reader meets them.
 #[derive(Debug, PartialEq)]
 struct PagesNav {

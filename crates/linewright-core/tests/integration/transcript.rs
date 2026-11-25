@@ -1321,7 +1321,7 @@ fn with_a_sub_agent_of_3h_2m_9s() -> String {
 }
 
 /// `docs/specs/runs.md`, Transcripts, and `lw logs`, Times;
-/// `docs/specs/ui_patterns.md`, Time, Durations.
+/// `docs/specs/design_system.md`, Times, Durations.
 #[test_log::test]
 fn a_sub_agent_that_ran_for_hours_shows_how_long_as_a_duration_and_each_line_its_time_past_the_hour()
  {

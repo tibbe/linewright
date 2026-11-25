@@ -52,7 +52,7 @@ impl TrialShown<'_> {
     }
 
     /// The name of its state, which gives no reason or detail
-    /// (`docs/specs/ui_patterns.md`, Status, A badge's words).
+    /// (`docs/specs/components.md`, Status badge).
     pub fn name(&self) -> &'static str {
         match self {
             TrialShown::Cancelled => "cancelled",

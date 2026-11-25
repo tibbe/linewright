@@ -107,7 +107,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/ui_patterns.md`, Filters; `docs/specs/runs.md`, Runs.
+/// `docs/specs/components.md`, Filters; `docs/specs/runs.md`, Runs.
 #[test_log::test(tokio::test)]
 async fn the_runs_pages_filters_are_labelled_unset_and_unbuttoned_with_a_stage_reading_all_stages()
 {
@@ -359,7 +359,8 @@ async fn the_runs_page_says_why_a_narrowing_does_not_read() {
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Tables.
+/// `docs/specs/components.md`, Table, and `docs/specs/runs.md`, Runs, The list
+/// of runs.
 #[test_log::test(tokio::test)]
 async fn the_runs_table_is_in_a_card_showing_no_name_with_the_filters_in_a_row_and_durations_aligned_right()
  {
@@ -404,8 +405,8 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
     assert_eq!(select(&html, "[title]").len(), 0);
 }
 
-/// `docs/specs/runs.md`, Ending, and `docs/specs/ui_patterns.md`,
-/// Status: handed back shows as waiting, which is `warning`.
+/// `docs/specs/runs.md`, Ending, and `docs/specs/design_system.md`, Status:
+/// handed back shows as waiting, which is `warning`.
 #[test_log::test(tokio::test)]
 async fn the_runs_and_item_pages_show_a_handed_back_runs_outcome_in_warning() {
     let pages = Pages::of(view(vec![ticket(1, "Do it")], vec![])).await;
@@ -462,7 +463,7 @@ fn run_ids(html: &Html) -> Vec<String> {
         .collect()
 }
 
-/// `docs/specs/ui_patterns.md`, Tables, Pages.
+/// `docs/specs/components.md`, Table, Pages.
 #[test_log::test(tokio::test)]
 async fn the_runs_page_shows_its_runs_25_at_a_time_with_the_pages_under_the_table() {
     let pages = triaged_in_runs(30).await;
@@ -522,7 +523,7 @@ async fn the_runs_page_shows_its_runs_25_at_a_time_with_the_pages_under_the_tabl
     );
 }
 
-/// `docs/specs/ui_patterns.md`, Tables, Pages, Updates.
+/// `docs/specs/components.md`, Table, Pages, Updates.
 #[test_log::test(tokio::test)]
 async fn the_runs_pages_stream_keeps_the_readers_page_number_as_runs_come() {
     let pages = triaged_in_runs(26).await;
