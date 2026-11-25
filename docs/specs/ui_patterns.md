@@ -40,17 +40,12 @@
   has none. The heading holds the thing's name, then the badge of its state
   where the screen gives its state there. Under the name is the line that the
   screen gives, if any.
-- **A heading's name** is its card's `card-title` ([Cards](#cards)).
+- **A heading's name** is its card's `card-title`.
 
 ## Cards
 
 - **A card** is a daisyUI `card` in `bg-base-200`, with daisyUI's
   `shadow-xs` and no border.
-- **A card's title** is its `card-title`, with an icon before it that stands
-  for what the card holds. The icon is that of the area of the thing that the
-  card holds, in the navigation ([Shell](shell.md)), such as Runs for a run's
-  heading or for a table of runs, but where the card's screen gives it
-  another.
 
 ## Buttons
 
@@ -138,25 +133,22 @@
 
 - **Statuses.** A status is one of those in the table below. Each area says
   which status each of its states shows as.
-- **Shown.** A status shows as its icon and its colour.
-  Where a screen also names a status's state, a badge in the status's colour
-  holds the icon and the state's name. A status among a screen's facts is the
+- **Shown.** A status shows as its icon and its colour. Where a screen also
+  names a status's state, the status's badge in the table below, in `badge-sm`,
+  holds the icon, then the state's name. A status among a screen's facts is the
   exception ([Facts](components.md#facts)). For example, a running benchmark run
   shows as "running", with the icon of in flight, in its colour.
 - **A badge's words.** The state's name in a badge gives no reason or
   detail: "no score", not why there is none.
-- **A status's badge** is a daisyUI `badge`, `badge-sm`, with the icon first.
-  A paused badge, whose colour is not a fill, is a `badge-outline` in
-  `base-content/60`.
 
-| Status    | Icon           | Colour            |
-| --------- | -------------- | ----------------- |
-| done      | `check-circle` | `success`         |
-| failed    | `x-circle`     | `error`           |
-| waiting   | `hand-raised`  | `warning`         |
-| in flight | `arrow-path`   | `info`            |
-| paused    | `pause-circle` | `base-content/60` |
-| cancelled | `no-symbol`    | `neutral`         |
+| Status    | Icon           | Colour            | Badge                                              |
+| --------- | -------------- | ----------------- | -------------------------------------------------- |
+| done      | `check-circle` | `success`         | a daisyUI `badge`, `badge-success`                 |
+| failed    | `x-circle`     | `error`           | a daisyUI `badge`, `badge-error`                   |
+| waiting   | `hand-raised`  | `warning`         | a daisyUI `badge`, `badge-warning`                 |
+| in flight | `arrow-path`   | `info`            | a daisyUI `badge`, `badge-info`                    |
+| paused    | `pause-circle` | `base-content/60` | a [paused badge](components.md#paused-badge)       |
+| cancelled | `no-symbol`    | `neutral`         | a daisyUI `badge`, `badge-neutral`                 |
 
 ## Tables
 
@@ -296,7 +288,7 @@
 ## Type
 
 - **Secondary text** is text that qualifies the text it sits beside, such as a
-  card's line under its title, a fact's label or a transcript entry's time or
+  card's line under its name, a fact's label or a transcript entry's time or
   duration. It is quieter than the text beside it
   ([Type](design_system.md#type)).
 
@@ -310,8 +302,3 @@
 - What a screen shows on hover it also shows on keyboard focus, over the
   screen, until the pointer leaves it or focus moves. Text cut to fit is shown
   whole this way, in a daisyUI `tooltip`.
-- Only a name's title is cut to fit; its number and its link to GitHub
-  always show. A name cut to fit has its link to GitHub at the end of its last
-  line.
-- **A link to GitHub** at the end of a name is the icon
-  `arrow-top-right-on-square`.

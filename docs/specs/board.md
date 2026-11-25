@@ -25,12 +25,6 @@ and `lw logs 42 --follow` shows the agent waiting on a test that hangs.
    including why Linewright is not working on it at all, so that I can unblock
    it.
 
-## Naming items
-
-- Every item or pull request named on a screen is named by its number, and
-  its title where Linewright knows it, except in a card's line, which names
-  it by its number alone, and links to its [Item](#item) and to GitHub.
-
 ## States
 
 An item's state ([State](repository.md#state)) is shown in these words.
@@ -80,7 +74,7 @@ An item's state ([State](repository.md#state)) is shown in these words.
 | Screen | Reached from                                                    | Purpose                                                                             |
 | ------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Board  | the navigation ([Shell](shell.md)), and opening the UI | see where every managed item stands, and which need a person                        |
-| Item   | an item named on any screen ([Naming items](#naming-items))     | see where one item stands, what it waits for, the items it relates to and its runs |
+| Item   | the title of an item name on any screen ([Item name](components.md#item-name)) | see where one item stands, what it waits for, the items it relates to and its runs |
 
 ### Board
 
@@ -120,20 +114,19 @@ An item's state ([State](repository.md#state)) is shown in these words.
 #### Lanes
 
 - **A lane.** Where the work was cut into tickets, the lane's head shows the
-  tracking issue's number and title, and how many of its tickets are closed
-  of the total. Its cards are its managed tickets. Otherwise, the head shows
-  the item's number and title, and the item is its one card.
+  tracking issue's name, and how many of its tickets are closed of the total.
+  Its cards are its managed tickets. Otherwise, the head shows the item's
+  name, and the item is its one card.
 - **Its look.** A lane stands apart from the screen around it, and each of
   its cards stands apart from the lane. A lane is drawn as a card is
   ([Cards](ui_patterns.md#cards)), with `px-2` at its sides and `pb-2` at its
   foot. In a lane, the columns are `gap-2` apart, and so are the cards in a
   column.
-- **A lane's head** is its top row, in `bg-base-200`, at least `h-10` tall,
-  with `pt-2` above its text. Its text is in `font-semibold`, on one line, cut
-  to fit. It is not a `card-title`, so it has no icon before its text.
-- **On a lane or a card.** A lane or a card holds no daisyUI component that
-  draws in `base-100`, `base-200` or `base-300`, such as a button, an input
-  or an alert.
+- **A lane's head** is its top row, in `bg-base-200`, at least `h-10` tall, with
+  `pt-2` above its text. It is one line in `font-semibold`. It holds the item's
+  icon, `size-[1em]`, then its [item name](components.md#item-name), then the
+  rest of the head. The icon is Octicons' `issue-opened` for an issue or
+  `git-pull-request` for a pull request. Only the title is cut to fit.
 - **Finished lanes.** A lane is finished once its cards are all in Done and,
   where it has a tracking issue, that issue is done. It shows as its head
   alone, with when it finished: when the last of its cards entered Done or
@@ -153,17 +146,21 @@ An item's state ([State](repository.md#state)) is shown in these words.
 
 #### Cards
 
-A card is the item's number and title and, under them, at most one line that
-says what its column does not: what sets the item apart from the rest of its
-column, what a person acts on, or since when it has sat. A card with nothing
-to add is the title alone.
+A card is the item's name and, under it, at most one line that says what its
+column does not: what sets the item apart from the rest of its column, what a
+person acts on, or since when it has sat. A card with nothing to add is the
+name alone.
 
 - **Its look.** A card is a daisyUI `card`, `card-sm`, drawn as a card is
-  ([Cards](ui_patterns.md#cards)), but in `bg-base-100`.
-- **The title.** A card's title is on at most two lines.
-- **Issue or pull request.** Beside its number, a card carries an icon that
-  says whether it is an issue or a pull request: Octicons' `issue-opened` or
-  `git-pull-request`.
+  ([Cards](ui_patterns.md#cards)), but in `bg-base-100`. An icon, `size-[1em]`,
+  is before its title: Octicons' `issue-opened` for an issue or
+  `git-pull-request` for a pull request.
+- **Its `card-title`** is its item's [item name](components.md#item-name), on
+  one line, with the item's title cut to fit. The number always shows.
+- **Its line** is the text of its `card-body`, under its title. An item that
+  it names is its number, a daisyUI `link`, `link-hover`, to the item on
+  GitHub. A pull request has Octicons' `git-pull-request`, `size-[1em]`, before
+  its number.
 - **The first that holds.** Where more than one row of a column holds, the
   line is the first.
 - **Card status.** A card whose line has a card status shows it. Card
@@ -172,7 +169,7 @@ to add is the title alone.
   ([Status](ui_patterns.md#status)): failed as failed, waiting for a person
   as waiting, in flight as in flight, and paused or queued as paused. A card
   that shows a card status has an edge `3px` wide at its start in its colour,
-  and its icon, in `base-content`, before its line.
+  and its icon, `size-[1em]`, in `base-content`, before its line.
 - **Done.** A card in Done is quieter than the rest, at `opacity-60`.
 - **How it ended.** An item in Done shows as done where it merged or a merged
   pull request closed it, and as cancelled where it closed otherwise.
@@ -251,17 +248,21 @@ tracking issue: a person who opened it, is assigned to it or reviews it.
 - **Address.** `/items/N`.
 - **Layout.** #N's heading at the top, then its facts
   ([Facts](components.md#facts)) in the order below, then its runs.
-- **Heading.** #N's number and title as on its card, and under them when
+- **Heading.** A [card with icon](components.md#card-with-icon), whose icon is
+  Octicons' `issue-opened` for an issue or `git-pull-request` for a pull
+  request. It holds #N's [item name](components.md#item-name), and under it when
   `serve` last read #N, such as "as of 2 minutes ago".
 - **Runs.** #N's latest ten runs, as a list of runs ([Runs](runs.md#runs-1))
   without the Item column. A last row, across the table, says how many earlier
-  runs were left out and links to Runs narrowed to #N.
+  runs were left out and links to Runs narrowed to #N. The table's card is a
+  [card with icon](components.md#card-with-icon), with the icon `command-line`.
 - **Its card.** On this screen, an item without a card of its own, such as a
   pull request on the card of the issue that it closes, has the card it
   would have on its own. A tracking issue's card is its lane head.
 - **Related items.** An item that a fact lists shows as its card does, with
   its card status's icon in place of its line. A tracking issue shows as its
-  lane head does.
+  lane head does. An item that Linewright has not read shows as its number
+  alone, linking to the item on GitHub, in place of its item name.
 
 | Fact           | Holds                                                                                                                                  | Shown                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |

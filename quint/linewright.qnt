@@ -1403,10 +1403,10 @@ module linewright {
     else "card"
   pure def hasOwnCard(w: World, i: int): bool = managed(w, i) and placement(w, i) == "card"
 
-  /// B #### Cards: "A card is the item's number and title and, under them, at
-  /// most one line that says what its column does not: what sets the item
-  /// apart from the rest of its column, what a person acts on, or since when
-  /// it has sat." The line of a card in column `col`: "Where more than one row
+  /// B #### Cards: "A card is the item's name and, under it, at most one line
+  /// that says what its column does not: what sets the item apart from the
+  /// rest of its column, what a person acts on, or since when it has sat." The
+  /// line of a card in column `col`: "Where more than one row
   /// of a column holds, the line is the first." Holds (U ## Holds), max-runs
   /// and checks are not modelled: their rows never hold.
   // spec-table B "#### Cards" lines column=col

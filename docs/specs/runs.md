@@ -442,7 +442,7 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 | -------- | ---------------------------------------------------------------------------------------------- |
 | Outcome  | the run's outcome                                                                              |
 | Run      | the run ID                                                                                     |
-| Item     | the item; for an automation's run, "automation" and its name, linking to Automations           |
+| Item     | its [item name](components.md#item-name), or, for an item that Linewright has not read, its number alone, linking to the item on GitHub; for an automation's run, "automation" and its name, linking to Automations           |
 | Stage    | the run's stage                                                                                |
 | Started  | when the run started, with an automation's run by hand marked there                            |
 | Duration | the run's duration                                                                             |
@@ -456,9 +456,10 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 - **Layout.** The heading at
   the top, then the run's transcripts ([Transcripts](#transcripts)), each under
   its session's heading.
-- **Heading.** The run ID, then ", by hand" for an automation's run by hand,
-  and "(it started no session)" for a run that ended without a session. Under
-  them is the run's item, as in the Item column of [Runs](#runs-1).
+- **Heading.** A [card with icon](components.md#card-with-icon), with the icon
+  `command-line`. It holds the run ID, then ", by hand" for an automation's run
+  by hand, and "(it started no session)" for a run that ended without a session.
+  Under them is the run's item, as in the Item column of [Runs](#runs-1).
 - **A session's heading.** The session's number and when it started, such as
   "session 1: started 5 minutes ago", then how long it has run. This time does
   not include a wait for the usage limit to reset. Where Linewright does not
