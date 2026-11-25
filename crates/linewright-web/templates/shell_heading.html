@@ -10,7 +10,7 @@
 {{ heading.card_title(crate::components::HeadingLevel::H1) }}
 {%- endif %}
 {%- if let Some((status, word)) = heading.state %}
-{% call ui::status(status, word) %}{% endcall %}
+{{ crate::components::StatusBadge::of(status, word) }}
 {%- endif %}
 </div>
 {%- if let Some(line) = heading.line %}

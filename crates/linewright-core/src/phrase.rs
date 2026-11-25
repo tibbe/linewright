@@ -25,21 +25,23 @@ pub enum Status {
 }
 
 impl Status {
-    /// The colour it shows in, as the classes of a badge in it: a badge gives
-    /// each daisyUI colour its own colour of text, which reads on it in either
-    /// theme, while `base-content/60`, a text colour with no content colour
-    /// of its own, is an outline badge in that colour, with no fill. Written
-    /// whole, since Tailwind finds the classes the stylesheet needs by
-    /// scanning the sources' text
+    /// Its badge, as the classes of the spec's table
+    /// (`docs/specs/ui_patterns.md`, Status): a badge gives each daisyUI
+    /// colour its own colour of text, which reads on it in either theme
+    /// (<https://daisyui.com/docs/colors/>), while paused, whose `base-content/60` is a text colour with no
+    /// content colour of its own, is a paused badge
+    /// (`docs/specs/components.md`, Paused badge), an outline in that colour
+    /// with no fill. Written whole, since Tailwind finds the classes the
+    /// stylesheet needs by scanning the sources' text
     /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
     pub fn badge(self) -> &'static str {
         match self {
-            Status::Done => "badge-success",
-            Status::Failed => "badge-error",
-            Status::InFlight => "badge-info",
-            Status::Waiting => "badge-warning",
-            Status::Cancelled => "badge-neutral",
-            Status::Paused => "badge-outline text-base-content/60",
+            Status::Done => "badge badge-success",
+            Status::Failed => "badge badge-error",
+            Status::InFlight => "badge badge-info",
+            Status::Waiting => "badge badge-warning",
+            Status::Cancelled => "badge badge-neutral",
+            Status::Paused => "badge badge-outline text-base-content/60",
         }
     }
 
@@ -272,12 +274,12 @@ mod tests {
         assert_eq!(
             statuses.map(Status::badge),
             [
-                "badge-success",
-                "badge-error",
-                "badge-info",
-                "badge-warning",
-                "badge-neutral",
-                "badge-outline text-base-content/60",
+                "badge badge-success",
+                "badge badge-error",
+                "badge badge-info",
+                "badge badge-warning",
+                "badge badge-neutral",
+                "badge badge-outline text-base-content/60",
             ]
         );
         assert_eq!(

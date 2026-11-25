@@ -14,7 +14,7 @@
 {%- when BenchmarkRunsColumn::Launched %}
 <th class="{{ column.align() }}">{{ benchmark_run.launched }}</th>
 {%- when BenchmarkRunsColumn::State %}
-<td class="{{ column.align() }}">{% call ui::status(benchmark_run.status, benchmark_run.state) %}{% endcall %}</td>
+<td class="{{ column.align() }}">{{ crate::components::StatusBadge::of(benchmark_run.status, benchmark_run.state) }}</td>
 {%- when BenchmarkRunsColumn::Tasks %}
 <td class="{{ column.align() }}">{{ benchmark_run.tasks }}</td>
 {%- when BenchmarkRunsColumn::Configurations %}

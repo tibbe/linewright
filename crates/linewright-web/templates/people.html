@@ -24,7 +24,7 @@
 {%- when PeopleColumn::Role %}
 <td class="text-left">{{ row.role }}</td>
 {%- when PeopleColumn::State %}
-<td class="text-left">{% call ui::status(row.status, row.state) %}{% endcall %}</td>
+<td class="text-left">{{ crate::components::StatusBadge::of(row.status, row.state) }}</td>
 {%- when PeopleColumn::SignedIn %}
 <td class="text-left whitespace-nowrap">{{ row.signed_in|safe }}</td>
 {%- when PeopleColumn::Buttons %}

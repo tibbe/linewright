@@ -780,7 +780,8 @@ const PAUSED_OR_QUEUED: &str =
 
 /// `docs/specs/board.md`, Cards: a card shows its column, its line, the
 /// tone of its card status with that status's icon before its line, and
-/// the icon of an issue beside its number.
+/// the icon of an issue beside its number. The status's icon is in
+/// `base-content`.
 #[test_log::test(tokio::test)]
 async fn a_card_paused_for_the_usage_limit_shows_its_column_line_tone_and_icons() {
     let claimed = assigned(ticket(1, "Do the thing"), &[LINEWRIGHT]);
@@ -805,11 +806,12 @@ async fn a_card_paused_for_the_usage_limit_shows_its_column_line_tone_and_icons(
         "{}",
         card.html()
     );
-    assert_eq!(
-        select_in(card, ".line > svg.icon:first-child").len(),
-        1,
+    let icons = select_in(card, ".line > svg.icon:first-child");
+    assert_eq!(icons.len(), 1, "{}", card.html());
+    assert!(
+        has_classes(icons[0], &["text-base-content"]),
         "{}",
-        card.html()
+        icons[0].html()
     );
     assert_no_status_by_colour_alone(&html);
 }

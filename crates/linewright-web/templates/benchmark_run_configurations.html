@@ -13,7 +13,7 @@
 <td class="{{ ConfigurationsColumn::PassRate.align() }}">
 {%- match row.pass_rate %}
 {%- when PassRate::Text(text) %}{{ text }}
-{%- when PassRate::Status { status, words } %}{% call ui::status(status, words) %}{% endcall %}
+{%- when PassRate::Status { status, words } %}{{ crate::components::StatusBadge::of(status, words) }}
 {%- endmatch -%}
 </td>
 {%- for figure in row.figures %}

@@ -230,40 +230,70 @@ fn icon_name(icon: ElementRef) -> String {
         .to_string()
 }
 
-/// `docs/specs/design_system.md`, Icons: every icon is one of the set,
-/// `size-5` before a `card-title`, `size-[1em]` in a `badge` and `size-4`
-/// elsewhere. The chart is a plot, not an icon.
+/// The classes the spec gives an icon where it sits
+/// (`docs/specs/design_system.md`, Icons): the size daisyUI's examples give
+/// it in the component nearest round it, `size-5` before a `card-title`
+/// (`docs/specs/components.md`, Card with icon), `size-4` as a transcript's
+/// chevron (`docs/specs/components.md`, Transcript), and otherwise, in a
+/// line of text, `size-[1em]`, centred on the line.
+fn classes_where_it_sits(icon: ElementRef) -> &'static [&'static str] {
+    let parent = ElementRef::wrap(icon.parent().unwrap()).unwrap();
+    if has_classes(parent, &["card-title"])
+        && parent.children().find_map(ElementRef::wrap) == Some(icon)
+    {
+        return &["size-5"];
+    }
+    for ancestor in icon.ancestors().filter_map(ElementRef::wrap) {
+        for (component, classes) in [
+            ("alert", &["size-6"][..]),
+            ("badge", &["size-[1em]"]),
+            ("btn", &["size-[1.2em]"]),
+            ("input", &["size-[1em]"]),
+            ("menu", &["size-5"]),
+            ("chevron", &["size-4"]),
+        ] {
+            if has_classes(ancestor, &[component]) {
+                return classes;
+            }
+        }
+    }
+    &["size-[1em]", "inline-block", "align-[calc(0.5cap-0.5em)]"]
+}
+
+/// `docs/specs/design_system.md`, Icons: every icon is one of the set, and
+/// is sized, and aligned, by where it sits, as a logo is. The chart is a
+/// plot, not an icon.
 #[test_log::test(tokio::test)]
 async fn every_icon_is_one_of_the_set_sized_by_where_it_sits() {
     let pages = with_a_run().await;
 
     let mut sizes = std::collections::BTreeSet::new();
-    for path in PATHS {
+    for path in PATHS.iter().chain(&["/people"]) {
         let html = pages.page(path).await;
         for icon in select(&html, "svg:not(#chart svg)") {
-            icon_name(icon);
-            let parent = ElementRef::wrap(icon.parent().unwrap()).unwrap();
-            let before_a_title = has_classes(parent, &["card-title"])
-                && parent.children().find_map(ElementRef::wrap) == Some(icon);
-            let size = if before_a_title {
-                "size-5"
-            } else if has_classes(parent, &["badge"]) {
-                "size-[1em]"
-            } else {
-                "size-4"
-            };
+            if icon.attr("data-logo").is_none() {
+                icon_name(icon);
+            }
+            let classes = classes_where_it_sits(icon);
             let sized: Vec<&str> = icon
                 .value()
                 .classes()
                 .filter(|class| class.starts_with("size-"))
                 .collect();
-            assert_eq!(sized, [size], "{path}: {}", parent.html());
-            sizes.insert(size);
+            assert_eq!(sized, classes[..1], "{path}: {}", icon.html());
+            for class in classes {
+                assert!(
+                    has_classes(icon, &[class]),
+                    "{path}: {class}: {}",
+                    icon.html()
+                );
+            }
+            sizes.insert(classes[0]);
         }
     }
     assert_eq!(
         sizes.into_iter().collect::<Vec<_>>(),
-        ["size-4", "size-5", "size-[1em]"]
+        ["size-5", "size-6", "size-[1.2em]", "size-[1em]"]
     );
 }
 
@@ -512,7 +542,7 @@ async fn the_content_is_a_panel_in_base_100_with_its_spacing_and_from_lg_its_bor
 
 /// `docs/specs/shell.md`, Navigation, Its look and The sidebar: the sidebar is
 /// in `bg-base-200`, `w-64`, `px-2` and `pt-10`, the repository `mx-5` with
-/// `gap-2` under it and its avatar `size-4` as the links' icons are, and the
+/// `gap-2` under it and its avatar the size of the links' icons, and the
 /// links a `menu` with daisyUI's padding.
 #[test_log::test(tokio::test)]
 async fn the_sidebar_is_in_base_200_with_the_specs_spacing_and_daisyuis_menu() {
@@ -534,13 +564,17 @@ async fn the_sidebar_is_in_base_200_with_the_specs_spacing_and_daisyuis_menu() {
         .classes()
         .filter(|class| class.contains("size-"))
         .collect();
-    assert_eq!(sizes, ["size-4"], "{}", avatar.html());
     let menu = select_in(nav, "ul.menu")[0];
     assert_eq!(spacing(menu, 'p'), Vec::<&str>::new(), "{}", menu.html());
     let icons = select_in(menu, "a > svg");
     assert_eq!(icons.len(), 6, "{}", menu.html());
     for icon in icons {
-        assert!(has_classes(icon, &["size-4"]), "{}", icon.html());
+        let icon_sizes: Vec<&str> = icon
+            .value()
+            .classes()
+            .filter(|class| class.contains("size-"))
+            .collect();
+        assert_eq!(sizes, icon_sizes, "{}: {}", avatar.html(), icon.html());
     }
 }
 

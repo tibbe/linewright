@@ -13,7 +13,7 @@
 <div class="card-body gap-1">
 <h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{{ crate::icons::item_kind_svg(card.kind) }}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
-<p class="line text-base-content/60">{% if let Some(status) = card.status %}{% call ui::icon(crate::icons::status_icon(status), crate::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ line|safe }}</p>
+<p class="line text-base-content/60">{% if let Some(status) = card.status %}{% call ui::icon(crate::icons::status_icon(status), crate::icons::IconSize::Text, "text-base-content") %}{% endcall %}{% endif %}{{ line|safe }}</p>
 {%- endif %}
 </div>
 </li>

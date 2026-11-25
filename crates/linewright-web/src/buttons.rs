@@ -72,9 +72,13 @@ impl Verb {
 
     /// What its button holds: its label after its icon.
     pub(super) fn labelled(self) -> Html {
-        self.icon()
-            .svg(IconSize::Inline)
-            .then(&html::escape(self.label()))
+        self.labelled_in(IconSize::Button)
+    }
+
+    /// Its label after its icon, sized for where it sits, such as an item
+    /// of a `menu` that is a `button` but not a `btn`.
+    pub(super) fn labelled_in(self, size: IconSize) -> Html {
+        self.icon().svg(size).then(&html::escape(self.label()))
     }
 }
 
