@@ -1,7 +1,7 @@
 //! The logos the web UI draws, which are their owners' own and none of the
-//! icon set (`docs/specs/design_system.md`, Icons): Google's "G" and
-//! GitHub's mark from Octicons, vendored beside this file with their
-//! licences, and Sign in's "G", the spec's own `google-g.svg`.
+//! icon set (`docs/specs/design_system.md`, Icons): Google's "G", the
+//! spec's own `google-g.svg`, and GitHub's mark from Octicons, vendored
+//! beside this file. Their notices are beside this file too.
 
 use std::sync::LazyLock;
 
@@ -11,10 +11,10 @@ use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use super::html::{self, Html};
 use super::icons::{DrawnSize, Fill, IconSize, Marker, Read, drawn_svg};
 
-/// The vendored SVG file of `provider`'s logo.
+/// The SVG file of `provider`'s logo.
 fn source(provider: Provider) -> &'static str {
     match provider {
-        Provider::Google => include_str!("logos/google/g-logo.svg"),
+        Provider::Google => GOOGLE_G,
         Provider::GitHub => include_str!("logos/octicons/mark-github-16.svg"),
     }
 }
@@ -43,9 +43,8 @@ pub(super) fn identity_logo(provider: Provider) -> Html {
     )
 }
 
-/// The "G" on Google's button on Sign in (`docs/specs/access.md`, Sign in),
-/// the spec's own, which [`source`]'s Google logo is not.
-const SIGN_IN_G: &str = include_str!("../../../docs/specs/assets/google-g.svg");
+/// Google's "G", the spec's own (`docs/specs/access.md`).
+const GOOGLE_G: &str = include_str!("../../../docs/specs/assets/google-g.svg");
 
 /// What a `data:` URI percent-encodes of an SVG file: what a URI or an HTML
 /// attribute can't hold as it is, and `%`, `#` and `&`.
@@ -67,11 +66,11 @@ const NOT_IN_A_DATA_URI: &AsciiSet = &CONTROLS
     .add(b'|')
     .add(b'}');
 
-/// [`SIGN_IN_G`] as a `data:` URI.
-static SIGN_IN_G_URI: LazyLock<String> = LazyLock::new(|| {
+/// [`GOOGLE_G`] as a `data:` URI.
+static GOOGLE_G_URI: LazyLock<String> = LazyLock::new(|| {
     format!(
         "data:image/svg+xml,{}",
-        utf8_percent_encode(SIGN_IN_G.trim(), NOT_IN_A_DATA_URI)
+        utf8_percent_encode(GOOGLE_G.trim(), NOT_IN_A_DATA_URI)
     )
 });
 
@@ -94,7 +93,7 @@ pub(super) fn sign_in_mark(provider: Provider) -> Html {
     match provider {
         Provider::Google => html::built(format!(
             r#"<img src="{src}" width="16" height="16" class="{size} shrink-0" alt="" data-logo="{key}">"#,
-            src = *SIGN_IN_G_URI,
+            src = *GOOGLE_G_URI,
             size = SignInMarkSize.class(),
             key = provider.key(),
         )),
@@ -115,7 +114,7 @@ mod tests {
         let google = identity_logo(Provider::Google).to_string();
         assert!(
             google.starts_with(
-                r##"<svg class="size-[1em] inline-block align-[calc(0.5cap-0.5em)] shrink-0" viewBox="0 0 48 48" fill="currentColor" role="img" aria-label="Google" data-logo="google"><path fill="#EA4335" "##
+                r##"<svg class="size-[1em] inline-block align-[calc(0.5cap-0.5em)] shrink-0" viewBox="0 0 48 48" fill="currentColor" role="img" aria-label="Google" data-logo="google"><g><path fill="#EA4335" "##
             ),
             "{google}"
         );
