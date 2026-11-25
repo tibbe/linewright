@@ -709,27 +709,23 @@ async fn each_tab_of_the_benchmark_page_opens_at_its_own_address() {
     }
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses: a segment that names
-/// no tab is an unknown page.
+/// `docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses; `docs/specs/shell.md`,
+/// No such thing: a segment that names no tab names no screen.
 #[test_log::test(tokio::test)]
-async fn a_benchmark_tab_that_does_not_exist_is_no_page() {
+async fn a_benchmark_tab_that_does_not_exist_is_no_such_thing() {
     let pages = with_benchmarks().await;
 
-    for path in [
+    for address in [
         "/benchmarks/1/nope",
         "/benchmarks/1/Tasks",
         "/benchmarks/1/launch",
         "/benchmarks/1/remove-task",
         "/benchmarks/9/nope",
+        "/benchmarks/9/tasks",
     ] {
-        let (status, body) = pages.get(path).await;
-
-        assert_eq!((status, body.as_str()), (404, "no such page"), "{path}");
+        let (status, body) = pages.get(address).await;
+        super::shell::assert_not_found(status, &body, address);
     }
-    let (status, body) = pages.get("/benchmarks/9/tasks").await;
-    assert_eq!(status, 404);
-    let html = Html::parse_document(&body);
-    assert_eq!(text(select(&html, "main #tasks")[0]), "No such benchmark 9");
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark, Tabs, Links: a tab's link carries the
@@ -822,19 +818,12 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
 
 /// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
-async fn the_page_of_no_benchmark_says_there_is_none() {
+async fn the_page_of_no_benchmark_is_no_such_thing() {
     let pages = with_benchmarks().await;
 
-    let (no_benchmark, no_benchmark_body) = pages.get("/benchmarks/9").await;
-    let (no_name, no_name_body) = pages.get("/benchmarks/Not%20a%20name").await;
-
-    for (status, body, shown) in [
-        (no_benchmark, no_benchmark_body, "No such benchmark 9"),
-        (no_name, no_name_body, "No such benchmark Not a name"),
-    ] {
-        assert_eq!(status, 404);
-        let html = Html::parse_document(&body);
-        assert_eq!(text(select(&html, "main #tasks")[0]), shown);
+    for address in ["/benchmarks/9", "/benchmarks/Not%20a%20name"] {
+        let (status, body) = pages.get(address).await;
+        super::shell::assert_not_found(status, &body, address);
     }
 }
 

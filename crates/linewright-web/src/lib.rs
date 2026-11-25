@@ -42,7 +42,8 @@ mod write;
 
 use benchmark_page::BenchmarkTab;
 use buttons::ScreenButton;
-use shell::{Frame, Missing, Navigation, Place, Thing};
+use caller::Reader;
+use shell::{Frame, Navigation, Place};
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -53,6 +54,7 @@ use std::time::Duration;
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Path, Request, State};
+use axum::handler::Handler as _;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::Event;
@@ -105,15 +107,15 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         )
         .route(
             "/benchmarks/{id}/remove-task",
-            get(no_such_page).post(benchmark_page::remove_task),
+            get(no_such_screen).post(benchmark_page::remove_task),
         )
         .route(
             "/benchmarks/{id}/edit",
-            get(no_such_page).post(editing::save_benchmark),
+            get(no_such_screen).post(editing::save_benchmark),
         )
         .route(
             "/benchmarks/{id}/launch",
-            get(no_such_page).post(launch::launch),
+            get(no_such_screen).post(launch::launch),
         )
         .route(
             "/events/benchmarks/{id}",
@@ -122,7 +124,7 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         .route("/tasks/{id}", get(task_page::task_page))
         .route(
             "/tasks/{id}/edit",
-            get(no_such_page).post(editing::save_task),
+            get(no_such_screen).post(editing::save_task),
         )
         .route("/events/tasks/{id}", get(task_page::task_events))
         .route(
@@ -135,11 +137,11 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         )
         .route(
             "/benchmark-runs/{id}/configurations/{configuration}",
-            get(no_such_page).post(editing::save_configuration),
+            get(no_such_screen).post(editing::save_configuration),
         )
         .route(
             "/benchmark-runs/{id}/cancel",
-            post(benchmark_run_page::cancel),
+            get(no_such_screen).post(benchmark_run_page::cancel),
         )
         .route(
             "/benchmark-runs/{id}/{configuration}/{task}/{repetition}/{of}",
@@ -159,30 +161,34 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         )
         .route(
             "/authorizations/{id}/end",
-            get(no_such_page).post(authorizations_page::end),
+            get(no_such_screen).post(authorizations_page::end),
         )
         .route("/people", get(people_page::people_page))
         .route("/events/people", get(people_page::people_events))
         .route(
             "/people/{id}/edit",
-            get(no_such_page).post(people_page::save_person),
+            get(no_such_screen).post(people_page::save_person),
         )
         .route(
             "/people/{id}/disable",
-            get(no_such_page).post(people_page::disable),
+            get(no_such_screen).post(people_page::disable),
         )
         .route(
             "/people/{id}/enable",
-            get(no_such_page).post(people_page::enable),
+            get(no_such_screen).post(people_page::enable),
         )
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
+        .route(NOT_FOUND_EVENTS, get(no_such_screen_events))
         .route(
             "/runs/{*id}",
             get(run_page::run_page).post(capture::capture),
         )
         .route("/events/runs/{*id}", get(run_page::run_events))
-        .route(Navigation::PATH, post(shell::remember_navigation))
+        .route(
+            Navigation::PATH,
+            get(no_such_screen).post(shell::remember_navigation),
+        )
         .route_layer(middleware::from_fn_with_state(
             sources.clone(),
             caller::signed_in,
@@ -217,12 +223,16 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
     };
     let server = oauth::Server::new(ui.public_url.clone());
     let mcp = crate::mcp::router(sources.clone(), &server, ui.manager.clone(), &ui.public_url);
+    let signed_in_fallback = no_such_screen.layer(middleware::from_fn_with_state(
+        sources.clone(),
+        caller::signed_in,
+    ));
     signed
         .merge(open)
+        .fallback(signed_in_fallback)
         .layer(middleware::from_fn(caller::cross_site))
         .merge(mcp)
         .layer(middleware::from_fn(confined))
-        .fallback(no_such_page)
         .layer(middleware::from_fn_with_state(
             ui.public_url.clone(),
             misdirected,
@@ -439,6 +449,8 @@ struct ErrorPage {
     error: String,
 }
 
+/// No such thing (`docs/specs/shell.md`, No such thing), standing in for
+/// the region of the screen whose address has nothing at it.
 #[derive(Template, WebTemplate)]
 #[template(path = "nothing_there.html")]
 struct NothingThere {
@@ -446,24 +458,58 @@ struct NothingThere {
     frame: Frame,
     /// The id of the page's region it stands in for.
     region: &'static str,
-    missing: Missing,
 }
 
-/// The screen of `missing`, the page `page` gives of it, standing in for
-/// the page's `region`, answered with 404.
+/// No such thing's region alone, as a stream sends it in place of the
+/// region `region` of a screen whose thing went away.
+#[derive(Template)]
+#[template(path = "nothing_there.html", block = "region")]
+struct NothingThereRegion {
+    region: &'static str,
+}
+
+/// No such thing in place of the screen whose stream is at `events`,
+/// standing in for its region `region`, answered with 404.
 fn nothing_there(
-    page: impl FnOnce(Thing) -> Page,
-    missing: Missing,
+    events: String,
+    navigation: Navigation,
     frame: Frame,
     region: &'static str,
 ) -> Response {
     let page = NothingThere {
-        page: page(Thing::Missing(missing.clone())),
+        page: Page::new(Place::NotFound, events, navigation),
         frame,
         region,
-        missing,
     };
     (StatusCode::NOT_FOUND, page).into_response()
+}
+
+/// The stream of No such thing at an address that names no screen.
+const NOT_FOUND_EVENTS: &str = "/events/not-found";
+
+/// The answer to a signed-in reader at an address that names no screen: No
+/// such thing (`docs/specs/shell.md`, No such thing), at 404.
+async fn no_such_screen(Reader { permit, sources }: Reader, navigation: Navigation) -> Response {
+    let frame = Frame::of(&permit, &sources).await;
+    nothing_there(NOT_FOUND_EVENTS.into(), navigation, frame, "nothing")
+}
+
+/// The regions of No such thing at an address that names no screen: the
+/// shell's.
+async fn no_such_screen_events(
+    Reader { permit, sources }: Reader,
+    watch: caller::Watch,
+    navigation: Navigation,
+) -> Response {
+    let regions = move || {
+        let (permit, sources) = (permit.clone(), sources.clone());
+        async move {
+            let frame = Frame::of(&permit, &sources).await;
+            let page = Page::new(Place::NotFound, NOT_FOUND_EVENTS.into(), navigation);
+            shell::regions(&frame, &page)
+        }
+    };
+    events(regions, watch)
 }
 
 /// How often a stream looks for what changed.

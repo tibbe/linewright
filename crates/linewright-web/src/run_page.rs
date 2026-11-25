@@ -40,9 +40,10 @@ use super::components::{EntryStatus, StatusBadge};
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon, IconSize};
 use super::names;
-use super::shell::{self, Frame, Heading, Missing, Navigation, Thing};
+use super::shell::{self, Frame, Heading, Navigation};
 use super::{
-    ErrorPage, Page, Sent, nothing_there, render, run_path, samples, unanswered, with_query,
+    ErrorPage, NothingThereRegion, Page, Sent, nothing_there, render, run_path, samples,
+    unanswered, with_query,
 };
 
 /// A change to the page's transcript that a change to the run's makes.
@@ -1008,9 +1009,9 @@ struct RunPage {
 pub(super) struct Transcribed {
     pub(super) kept: KeptRuns,
     pub(super) which: Which,
-    /// What its page names as missing where its run does not exist, if it
-    /// is that page's own run.
-    pub(super) missing: Option<Missing>,
+    /// Whether its run is its page's own, so that the page is No such
+    /// thing where the run does not exist.
+    pub(super) own: bool,
 }
 
 impl Transcribed {
@@ -1022,7 +1023,7 @@ impl Transcribed {
                 id: id.clone(),
                 item: None,
             },
-            missing: Some(Missing::Run(id.to_string())),
+            own: true,
         }
     }
 }
@@ -1188,13 +1189,24 @@ fn run_heading(permit: &Permit<Read>, sources: &Sources, heading: &RunHeading) -
     }
 }
 
-/// What run `run`'s page shows of it: its heading, or that there is no
-/// such run; `None` where its record does not read.
-async fn run_thing(permit: &Permit<Read>, sources: &Sources, run: &RunId) -> Option<Thing> {
+/// The id of the region of a transcript's page that No such thing stands
+/// in for: all of the page's own.
+pub(super) const RUN_REGION: &str = "run";
+
+/// What run `run`'s page shows of it, as its record reads now.
+enum RunShown {
+    Found(Heading),
+    /// There is no such run: the page is No such thing.
+    NoSuch,
+    /// Its record does not read.
+    Unread,
+}
+
+async fn run_shown(permit: &Permit<Read>, sources: &Sources, run: &RunId) -> RunShown {
     match actions::run_heading(permit, sources, run).await {
-        Ok(Some(heading)) => Some(Thing::Found(run_heading(permit, sources, &heading))),
-        Ok(None) => Some(Thing::Missing(Missing::Run(run.to_string()))),
-        Err(_) => None,
+        Ok(Some(heading)) => RunShown::Found(run_heading(permit, sources, &heading)),
+        Ok(None) => RunShown::NoSuch,
+        Err(_) => RunShown::Unread,
     }
 }
 
@@ -1301,15 +1313,10 @@ pub(super) async fn transcript_page(
     navigation: Navigation,
 ) -> Response {
     let shown = match transcribed {
-        Ok(transcribed) => match (read(&transcribed, verbose).await, transcribed.missing) {
-            (Err(RunError::NoSuchRun(_)), Some(missing)) => {
+        Ok(transcribed) => match (read(&transcribed, verbose).await, transcribed.own) {
+            (Err(RunError::NoSuchRun(_)), true) => {
                 let events = format!("/events{path}");
-                return nothing_there(
-                    |thing| Page::new(run_place(thing), events, navigation),
-                    missing,
-                    frame,
-                    "transcript",
-                );
+                return nothing_there(events, navigation, frame, RUN_REGION);
             }
             (shown, _) => shown,
         },
@@ -1342,11 +1349,6 @@ pub(super) async fn transcript_page(
     }
 }
 
-/// The place of a run's screen, or of a transcript's: alone.
-fn run_place(thing: Thing) -> shell::Place {
-    shell::Place::Alone(thing)
-}
-
 pub(super) async fn run_page(
     Reader { permit, sources }: Reader,
     Path(id): Path<String>,
@@ -1354,28 +1356,29 @@ pub(super) async fn run_page(
     navigation: Navigation,
 ) -> Response {
     let events = format!("/events{}", super::run_path(&id));
-    let Ok(run) = id.parse::<RunId>() else {
-        let frame = Frame::of(&permit, &sources).await;
-        let page = |thing| Page::new(run_place(thing), events, navigation);
-        return nothing_there(page, Missing::Run(id), frame, "transcript");
+    let shown = match id.parse::<RunId>() {
+        Ok(run) => match run_shown(&permit, &sources, &run).await {
+            RunShown::Found(heading) => Some((run, heading)),
+            RunShown::Unread => Some((
+                run,
+                Heading {
+                    icon: Some(CardIcon::CommandLine),
+                    ..Heading::named(id)
+                },
+            )),
+            RunShown::NoSuch => None,
+        },
+        Err(_) => None,
     };
-    let thing = match run_thing(&permit, &sources, &run).await {
-        Some(Thing::Missing(missing)) => {
-            let frame = Frame::of(&permit, &sources).await;
-            let page = |thing| Page::new(run_place(thing), events, navigation);
-            return nothing_there(page, missing, frame, "transcript");
-        }
-        Some(found) => found,
-        None => Thing::Found(Heading {
-            icon: Some(CardIcon::CommandLine),
-            ..Heading::named(id)
-        }),
+    let Some((run, heading)) = shown else {
+        let frame = Frame::of(&permit, &sources).await;
+        return nothing_there(events, navigation, frame, RUN_REGION);
     };
     let capture = Offer::of(&permit, &sources, &run).await.map(Offer::html);
     transcript_page(
         Frame::of(&permit, &sources).await,
         &run_path(&run),
-        run_place(thing),
+        shell::Place::Alone(heading),
         Ok(Transcribed::run(&permit, &sources, &run)),
         query.verbose(),
         capture,
@@ -1404,10 +1407,7 @@ pub(super) async fn run_events(
         .as_ref()
         .map(|run| Transcribed::run(&permit, &sources, run));
     let found = match &run {
-        Some(run) => !matches!(
-            run_thing(&permit, &sources, run).await,
-            Some(Thing::Missing(_))
-        ),
+        Some(run) => !matches!(run_shown(&permit, &sources, run).await, RunShown::NoSuch),
         None => false,
     };
     let captures = query.captures();
@@ -1418,16 +1418,15 @@ pub(super) async fn run_events(
             let (run, id) = (run.clone(), id.clone());
             let events = format!("/events{}", super::run_path(&id));
             Box::pin(async move {
-                let thing = match &run {
-                    Some(run) if found => run_thing(&permit, &sources, run).await?,
-                    _ => Thing::Missing(Missing::Run(id)),
+                let place = match &run {
+                    Some(run) if found => match run_shown(&permit, &sources, run).await {
+                        RunShown::Found(heading) => shell::Place::Alone(heading),
+                        RunShown::NoSuch => shell::Place::NotFound,
+                        RunShown::Unread => return None,
+                    },
+                    _ => shell::Place::NotFound,
                 };
-                Some(transcript_page_at(
-                    run_place(thing),
-                    events,
-                    captures,
-                    navigation,
-                ))
+                Some(transcript_page_at(place, events, captures, navigation))
             })
         })
     };
@@ -1451,7 +1450,8 @@ pub(super) type PageOf = Box<dyn Fn() -> BoxFuture<'static, Option<Page>> + Send
 /// The regions of the page of the transcript `transcribed` names: the
 /// shell's of the page `page` makes, and while the run is in flight the
 /// transcript's lines after those the page showed, or after the
-/// `Last-Event-ID` a reconnecting reader gives.
+/// `Last-Event-ID` a reconnecting reader gives. The page's own run, once
+/// gone, is followed no more.
 pub(super) async fn transcript_events(
     permit: Permit<Read>,
     sources: Sources,
@@ -1486,6 +1486,7 @@ pub(super) async fn transcript_events(
                     }
                     Follow::Start | Follow::After(_) => Some(followed),
                 },
+                Err(LogsError::NoSuchRun(_)) if transcribed.own => None,
                 Err(e) => {
                     let (status, error) = RunError::from(e).answer();
                     error!(error, "following a transcript for its page failed");
@@ -1567,7 +1568,15 @@ impl RunStream {
                     }
                     let frame = Frame::of(&self.permit, &self.sources).await;
                     let regions = match (self.page)().await {
-                        Some(page) => shell::regions(&frame, &page),
+                        Some(page) => {
+                            let mut regions = shell::regions(&frame, &page);
+                            if let shell::Place::NotFound = page.place {
+                                self.transcript = None;
+                                let region = NothingThereRegion { region: RUN_REGION };
+                                regions.push((RUN_REGION, render(&region)));
+                            }
+                            regions
+                        }
                         None => vec![shell::holds(&frame)],
                     };
                     let changed = self.sent.changed(regions);

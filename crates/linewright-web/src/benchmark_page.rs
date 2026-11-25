@@ -43,12 +43,13 @@ use super::making::{
     REQUIRED, both,
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::shell::{self, Frame, Heading, Missing, Navigation, Place, Thing};
+use super::shell::{self, Frame, Heading, Navigation, Place};
 use super::table::{Align, TableRows, View};
 use super::write::{Refused, Write};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, cookie_headers,
-    cookie_values, events, no_such_page, nothing_there, render, run_path, task_path, with_filters,
+    cookie_values, events, no_such_screen, nothing_there, render, run_path, task_path,
+    with_filters,
 };
 
 /// A task's row.
@@ -660,7 +661,7 @@ fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
         ..Heading::named(benchmark.name.as_str())
     };
     Page::new(
-        Place::Alone(Thing::Found(heading)),
+        Place::Alone(heading),
         paging.stream(benchmark.id),
         navigation,
     )
@@ -752,7 +753,7 @@ pub(super) async fn benchmark_tab_page(
     removed: Removed,
 ) -> Response {
     let Ok(tab) = tab.parse() else {
-        return no_such_page().await;
+        return no_such_screen(Reader { permit, sources }, navigation).await;
     };
     benchmark_page_on(permit, sources, id, Some(tab), paging, removed, navigation).await
 }
@@ -827,21 +828,16 @@ async fn benchmark_page_on(
         Err(unshown) => {
             let events = paging.path(&format!("/events/benchmarks/{id}"));
             match unshown {
-                Unshown::NoSuch => nothing_there(
-                    |thing| Page::new(Place::Alone(thing), events, navigation),
-                    Missing::Benchmark(id),
-                    frame,
-                    "tasks",
-                ),
+                Unshown::NoSuch => nothing_there(events, navigation, frame, "tasks"),
                 Unshown::Failed(e) => {
                     let error = format!("{e:#}");
                     warn!(benchmark = id, error, "reading a benchmark failed");
                     let page = ErrorPage {
                         page: Page::new(
-                            Place::Alone(Thing::Found(Heading {
+                            Place::Alone(Heading {
                                 icon: Some(CardIcon::Beaker),
                                 ..Heading::named(id)
-                            })),
+                            }),
                             events,
                             navigation,
                         ),
