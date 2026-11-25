@@ -38,8 +38,8 @@ pub(crate) fn rendered(template: &impl askama::Template) -> Html {
     Html(super::render(template))
 }
 
-/// `phrase` as HTML (`docs/specs/components.md`, Item name, and
-/// `docs/specs/ui_patterns.md`, Time): an item is named as `naming` names it,
+/// `phrase` as HTML (`docs/specs/board.md`, Item, Items in Waiting for and
+/// in what keeps #N out, and `docs/specs/ui_patterns.md`, Time): an item is named as `naming` names it,
 /// a time and a duration are `<time>` elements holding the text the commands
 /// print, and a label or a command is code.
 pub(crate) fn phrase(phrase: &Phrase, naming: &Naming) -> Html {

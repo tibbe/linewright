@@ -5,6 +5,12 @@
 <span class="status-text"><span class="{{ status.dot() }}" aria-hidden="true"></span>{{ crate::icons::named_status_icon(status) }}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
+{#- A related item's icon, then its card status's icon, if it has one
+    (`docs/specs/board.md`, Item, Related items). -#}
+{%- macro related_icons(kind, status) -%}
+{{ crate::icons::item_kind_svg(kind) }}{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Text) %}{% endcall %}{% endif %}
+{%- endmacro -%}
+
 {#- A page's facts (`docs/specs/components.md`, Facts), in a card, each a
     row of its label at the start, in secondary text, and its value at the
     end, each line of the value a block of its own, its text read from
@@ -24,10 +30,15 @@
 {{ text|safe }}
 {%- when crate::facts::Piece::Status { status, words } -%}
 {% call status_text(status, words) %}{% endcall %}
-{%- when crate::facts::Piece::Item { status, kind, name } -%}
-<span class="related-item inline-flex max-w-full min-w-0 items-center">{{ crate::icons::item_kind_svg(kind) }}{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Text) %}{% endcall %}{% endif %}{{ name|safe }}</span>
-{%- when crate::facts::Piece::LaneHead(heading) -%}
-<span class="related-item inline-flex max-w-full min-w-0 items-center">{{ heading|safe }}</span>
+{%- when crate::facts::Piece::Items(items) -%}
+{%- for item in items -%}
+{%- match item -%}
+{%- when crate::facts::RelatedItem::Read { kind, status, number, title, repo, rest } -%}
+<span class="related-item inline-flex max-w-full min-w-0 items-center">{% if rest.is_some() %}<span class="inline-flex max-w-full min-w-0 items-center gap-[0.25em]">{% endif %}{% call related_icons(kind, status) %}{% endcall %}<span class="inline-flex max-w-full min-w-0 items-baseline gap-[0.25em]">{% let title = crate::item_parts::ItemTitle { number: number.clone(), title, cut: crate::item_parts::Cut::ToFit } %}{{ title }} {{ crate::item_parts::ItemNumberLink::after(title, repo) }}</span>{% if let Some(rest) = rest %}{{ rest|safe }}</span>{% endif %}</span>
+{%- when crate::facts::RelatedItem::Unread { kind, status, number, repo } -%}
+<span class="related-item inline-flex max-w-full min-w-0 items-center">{% call related_icons(kind, status) %}{% endcall %}{{ crate::item_parts::CardLineNumber { number: number.clone(), repo, kind: None } }}</span>
+{%- endmatch -%}
+{%- endfor -%}
 {%- when crate::facts::Piece::Markup(markup) -%}
 {{ markup|safe }}
 {%- endmatch -%}
@@ -343,8 +354,10 @@ card {% call card_surface(colour) %}{% endcall %}
     own in a cut name's holder. -#}
 {%- macro item_cell(item) -%}
 {%- match item -%}
-{%- when crate::runs_table::ItemCell::Item(item) -%}
-{{ item|safe }}
+{%- when crate::runs_table::ItemCell::Read { number, title, repo } -%}
+<span class="inline-flex max-w-full min-w-0 items-baseline gap-[0.25em]">{% let title = crate::item_parts::ItemTitle { number: number.clone(), title, cut: crate::item_parts::Cut::ToFit } %}{{ title }} {{ crate::item_parts::ItemNumberLink::after(title, repo) }}</span>
+{%- when crate::runs_table::ItemCell::Unread { number, repo } -%}
+{{ crate::item_parts::CardLineNumber { number: number.clone(), repo, kind: None } }}
 {%- when crate::runs_table::ItemCell::Automation(name) -%}
 <a class="link link-hover min-w-0 shrink truncate" href="/automations" data-tip-cut>automation {{ name }}</a>
 {%- endmatch -%}

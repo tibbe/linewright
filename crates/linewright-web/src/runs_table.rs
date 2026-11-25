@@ -7,7 +7,6 @@ use linewright_core::domain::Number;
 use linewright_core::phrase::Status;
 use linewright_core::runs::{self, Listing, Run, RunOf};
 
-use super::components::Fit;
 use super::html::{self, Html};
 use super::names::Naming;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
@@ -91,9 +90,15 @@ impl RunsColumn {
 
 /// What a run is of, as the Item column names it.
 pub(super) enum ItemCell {
-    /// The item's item name on one line, or its number alone where its
-    /// title is not known (`docs/specs/runs.md`, Runs).
-    Item(Html),
+    /// An item that Linewright has read: its title, cut to fit its line,
+    /// then its number (`docs/specs/runs.md`, Runs, The item).
+    Read {
+        number: Number,
+        title: String,
+        repo: String,
+    },
+    /// An item that Linewright has not read, named by its number alone.
+    Unread { number: Number, repo: String },
     /// The automation's name, for the cell to link to the automations page.
     Automation(String),
 }
@@ -102,8 +107,19 @@ impl ItemCell {
     /// What the run of `of` is of, its item as `naming` names it.
     pub(super) fn of(of: &RunOf, naming: &Naming) -> ItemCell {
         match of {
-            RunOf::Work { item, stage } => {
-                ItemCell::Item(naming.item_fitting(*item, stage.item_kind(), Fit::OneLine))
+            RunOf::Work { item, .. } => {
+                let repo = naming.repo().to_owned();
+                match naming.title(*item) {
+                    Some(title) => ItemCell::Read {
+                        number: *item,
+                        title: title.to_owned(),
+                        repo,
+                    },
+                    None => ItemCell::Unread {
+                        number: *item,
+                        repo,
+                    },
+                }
             }
             RunOf::Automation { automation } => ItemCell::Automation(automation.to_string()),
         }
