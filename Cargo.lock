@@ -2191,7 +2191,7 @@ dependencies = [
 
 [[package]]
 name = "linewright"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "linewright-claude"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "linewright-core"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2299,7 +2299,7 @@ dependencies = [
 
 [[package]]
 name = "linewright-github"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2325,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "linewright-web"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "askama",
