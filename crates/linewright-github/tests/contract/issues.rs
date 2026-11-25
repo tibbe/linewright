@@ -6,7 +6,7 @@
 //!
 //! [`Store::set_issue_type`]: linewright_core::store::Store::set_issue_type
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use linewright_core::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueClosing, IssueEvent, Linked, Login,
     Number, Opening, Scope, SpecChangeIssue, SubIssue, SubIssueState, Windows,
@@ -40,6 +40,7 @@ contracts![
     a_blocker_is_listed_open_until_it_closes,
     no_issue_is_read_for_a_number_the_store_lacks,
     every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated,
+    linking_issues_leaves_when_each_was_last_updated,
 ];
 
 /// Opens an issue, as Linewright, titled for `what`.
@@ -618,11 +619,12 @@ async fn no_issue_is_read_for_a_number_the_store_lacks(sandbox: Sandbox) -> Resu
     )
 }
 
+/// A link between issues is not among these writes:
+/// [`linking_issues_leaves_when_each_was_last_updated`] holds what one does.
 async fn every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated(
     sandbox: Sandbox,
 ) -> Result<()> {
     let issue = open(&sandbox, "updated").await?;
-    let blocker = open(&sandbox, "updated-blocker").await?;
     let label = sandbox.new_label("updated", "Made by a contract").await?;
     let owner = sandbox.reviewer();
     let store = sandbox.store();
@@ -667,7 +669,75 @@ async fn every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated
     store
         .close_issue(issue, IssueCloseReason::NotPlanned)
         .await?;
-    written("a close").await?;
-    store.add_blocked_by(issue, blocker).await?;
-    written("a blocker").await
+    written("a close").await
+}
+
+/// Adding a blocker, adding a sub-issue and removing it each leave both
+/// issues' time of last update where it was.
+async fn linking_issues_leaves_when_each_was_last_updated(sandbox: Sandbox) -> Result<()> {
+    let one = open(&sandbox, "linked").await?;
+    let other = open(&sandbox, "linked-other").await?;
+    let store = sandbox.store();
+    let updated = async || {
+        let snapshot = store.snapshot(recent(), &Scope::default()).await?;
+        [one, other]
+            .map(|number| {
+                snapshot
+                    .updated_at(number)
+                    .with_context(|| format!("the snapshot does not hold {number}"))
+                    .map(|at| (number, at))
+            })
+            .into_iter()
+            .collect::<Result<Vec<_>>>()
+    };
+    let before = sandbox.eventually(updated).await?;
+    let unmoved = async |what: &str| {
+        sandbox
+            .throughout(async || {
+                for ((number, was), (_, now)) in before.iter().zip(updated().await?) {
+                    ensure!(now == *was, "{what} moved {number} from {was} to {now}");
+                }
+                Ok(())
+            })
+            .await
+    };
+    let linked_as_sub_issue = async |linked: bool| {
+        sandbox
+            .eventually(async || {
+                let parent = held(&sandbox, one).await?.parent.map(|p| p.number);
+                equal("the parent", &parent, &linked.then_some(other))?;
+                let children: Vec<Number> = held(&sandbox, other)
+                    .await?
+                    .sub_issues
+                    .iter()
+                    .map(|s| s.number)
+                    .collect();
+                equal(
+                    "the sub-issues",
+                    &children,
+                    &linked.then_some(one).into_iter().collect(),
+                )
+            })
+            .await
+    };
+    sandbox.tick().await;
+
+    store.add_blocked_by(one, other).await?;
+    sandbox
+        .eventually(async || {
+            let blockers = held(&sandbox, one).await?.blocked_by;
+            ensure!(
+                blockers.iter().any(|b| b.number == other),
+                "the blocker is not read back: {blockers:?}"
+            );
+            Ok(())
+        })
+        .await?;
+    unmoved("a blocker").await?;
+    store.add_sub_issue(other, one).await?;
+    linked_as_sub_issue(true).await?;
+    unmoved("a sub-issue").await?;
+    store.remove_sub_issue(other, one).await?;
+    linked_as_sub_issue(false).await?;
+    unmoved("a sub-issue removed").await
 }
