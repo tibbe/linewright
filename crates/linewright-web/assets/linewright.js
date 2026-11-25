@@ -1,6 +1,7 @@
 /**
- * The web UI's script (docs/specs/ui_patterns.md): it says since when the
- * page lost `serve`, loads the page again once its browser no longer signs
+ * The web UI's script (docs/specs/shell.md, Lost `serve`;
+ * docs/specs/design_system.md, Screens, Live): it says since when the page
+ * lost `serve`, loads the page again once its browser no longer signs
  * anyone in (docs/specs/access.md, Signing in, An open screen), shows times
  * and durations in the page's language and the reader's time zone, keeping
  * them up, keeps a run's transcript at its latest
@@ -15,8 +16,8 @@
  * reader edits,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen and a table's page links
- * (docs/specs/ui_patterns.md, Tables, Pages) as a filter, but for a link the
- * reader opens elsewhere, opens a tab in place at its address, fills in a
+ * (docs/specs/components.md, Table, Pages, Links) as a filter, but for a link
+ * the reader opens elsewhere, opens a tab in place at its address, fills in a
  * capture's name for the
  * run chosen and keeps that run chosen through updates, enables a capture's
  * new benchmark's name while it is chosen, adds and removes
@@ -170,7 +171,7 @@
 
   /**
    * Closes a confirmation as the reader goes ahead
-   * (docs/specs/ui_patterns.md, Confirming), so that it sends its request
+   * (docs/specs/components.md, Confirmation), so that it sends its request
    * once.
    */
   document.addEventListener("submit", (event) => {
@@ -181,7 +182,7 @@
 
   /**
    * Keeps the run a capture sent chosen, as the reader chose it, through the
-   * updates after a refusal (docs/specs/ui_patterns.md, Making).
+   * updates after a refusal (docs/specs/components.md, Form dialog, A refusal).
    */
   document.addEventListener("submit", (event) => {
     for (const select of event.target?.querySelectorAll?.("select[name=run]") ?? []) {
@@ -191,8 +192,8 @@
 
   /**
    * Whether `form` is a dialog's that makes a thing
-   * (docs/specs/ui_patterns.md, Making), which answers into itself and
-   * stays open on a refusal.
+   * (docs/specs/components.md, Form dialog, A refusal), which answers into
+   * itself and stays open on a refusal.
    */
   const isNewForm = (form) => form.hasAttribute?.("data-new") ?? false;
 
@@ -235,8 +236,8 @@
   }
 
   /**
-   * The values of a dialog that changes a thing (docs/specs/ui_patterns.md,
-   * Editing), the element of the page's stream its form's `data-values`
+   * The values of a dialog that changes a thing (docs/specs/components.md, Edit
+   * dialog), the element of the page's stream its form's `data-values`
    * names, which holds each field's value as `data-` and the field's name.
    */
   const valuesOf = (form) => document.getElementById(form.getAttribute?.("data-values") || "");
@@ -287,9 +288,9 @@
 
   /**
    * The hint of `field`, if it is a making dialog's field
-   * (docs/specs/ui_patterns.md, Making), drawn by the `field` macro:
-   * its `validator-hint`, whose `data-unrefused-hint` is what it says while
-   * Linewright has not refused the field.
+   * (docs/specs/components.md, Form dialog, A field and A refusal), drawn by
+   * the `field` macro: its `validator-hint`, whose `data-unrefused-hint` is
+   * what it says while Linewright has not refused the field.
    */
   function hintOf(field) {
     if (!field?.closest?.("form[data-new]")) return null;
@@ -299,7 +300,7 @@
   /**
    * Gives a making dialog's field that the browser finds empty or of white
    * space alone the message "Required.", as its hint says
-   * (docs/specs/ui_patterns.md, Making, Required). `invalid` does not
+   * (docs/specs/components.md, Form dialog, Required). `invalid` does not
    * bubble:
    * https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#statically-validate-the-constraints
    */
@@ -331,7 +332,7 @@
 
   /**
    * Drops Linewright's refusal of a making dialog's field once the reader
-   * edits it (docs/specs/ui_patterns.md, Making, A refusal), its hint
+   * edits it (docs/specs/components.md, Form dialog, A refusal), its hint
    * saying again what it says of a field not refused.
    */
   document.addEventListener("input", (event) => {
@@ -369,7 +370,8 @@
 
   /**
    * Opens or closes a fold row on a click on its button, the one part of the
-   * row that opens it (docs/specs/ui_patterns.md, Tables, Opening in place).
+   * row that opens it (docs/specs/benchmarks.md, Benchmark run, Opening in
+   * place).
    */
   document.addEventListener("click", (event) => {
     const clicked = event.target?.closest?.(foldButtonSelector);
@@ -536,7 +538,7 @@
   }
 
   /**
-   * Applies `form`'s filters (docs/specs/ui_patterns.md, Filters): the
+   * Applies `form`'s filters (docs/specs/components.md, Filters): the
    * page's address and its stream, at the form's `data-filters`, take their
    * query, and so drop the table's pages.
    */
@@ -555,10 +557,10 @@
   });
 
   /**
-   * Opens `tab`, a link to a tab's address (docs/specs/ui_patterns.md,
-   * Tabs): its panel shows in place of the others and the page's address
-   * becomes its, with no reload, so the stream and what the reader opened
-   * stay.
+   * Opens `tab`, a link to a tab's address (docs/specs/benchmarks.md,
+   * Benchmark, Tabs): its panel shows in place of the others and the page's
+   * address becomes its, with no reload, so the stream and what the reader
+   * opened stay.
    */
   function openTab(tab) {
     for (const other of tab.closest("[role=tablist]").querySelectorAll(TAB)) {
@@ -853,7 +855,7 @@
    * shows its `data-tip`, or else its text, only while it or an element in it
    * is cut. It shows on hover and on keyboard focus, over the page, until the
    * pointer leaves it or focus moves, and Escape hides it
-   * (`docs/specs/ui_patterns.md`, Layout; WCAG 1.4.13,
+   * (`docs/specs/design_system.md`, Layout, Hover and focus; WCAG 1.4.13,
    * https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
    */
   const tip = document.getElementById("tip");

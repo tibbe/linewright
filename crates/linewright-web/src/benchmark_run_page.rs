@@ -112,7 +112,7 @@ impl Axis {
     }
 
     /// Its scale where the largest mean is 0: $1 for cost and 1 second for
-    /// time (`docs/specs/components.md`, Chart, The scale).
+    /// time (`docs/specs/benchmarks.md`, Benchmark run, The plot, The scale).
     fn least_scale(self) -> f64 {
         match self {
             Axis::Cost | Axis::Time => 1.0,
@@ -1474,9 +1474,9 @@ mod tests {
             .collect()
     }
 
-    /// `docs/specs/components.md`, Chart, The scale and Ticks: the
-    /// horizontal axis runs from 0 to 110% of the largest mean, with ticks at
-    /// 0, half the scale and the scale.
+    /// `docs/specs/benchmarks.md`, Benchmark run, The plot, The scale and
+    /// Ticks: the horizontal axis runs from 0 to 110% of the largest mean, with
+    /// ticks at 0, half the scale and the scale.
     #[test_log::test]
     fn the_horizontal_scale_runs_to_110_percent_of_the_largest_mean() {
         assert_eq!(
@@ -1489,8 +1489,9 @@ mod tests {
         );
     }
 
-    /// `docs/specs/components.md`, Chart, The scale: where the largest
-    /// mean is 0, the scale runs to $1 for cost and to 1 second for time.
+    /// `docs/specs/benchmarks.md`, Benchmark run, The plot, The scale: where
+    /// the largest mean is 0, the scale runs to $1 for cost and to 1 second for
+    /// time.
     #[test_log::test]
     fn with_a_largest_mean_of_0_the_scale_runs_to_a_dollar_or_a_second() {
         assert_eq!(

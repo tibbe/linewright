@@ -1,6 +1,6 @@
 //! Making a thing in a dialog, such as one that "New" opens, or changing one in
-//! a dialog that "Edit" opens (`docs/specs/ui_patterns.md`, Dialogs, Making and
-//! Editing), drawn by the `new_dialog` and `new_form` macros, its form
+//! a dialog that "Edit" opens (`docs/specs/components.md`, Form dialog and Edit
+//! dialog), drawn by the `new_dialog` and `new_form` macros, its form
 //! answering into itself, and what was made said on a screen that does not show
 //! it.
 
@@ -24,7 +24,7 @@ pub(super) trait Form: Default {
 /// A field a dialog draws.
 pub(super) trait Field: Ord + Clone {
     /// Whether Linewright cannot make the thing without it
-    /// (`docs/specs/ui_patterns.md`, Making, Required).
+    /// (`docs/specs/components.md`, Form dialog, Required).
     fn required(&self) -> bool;
 }
 
@@ -145,7 +145,7 @@ impl<F: Form> Making<F> {
 }
 
 /// A field as its dialog's form draws it with the `field` macro
-/// (`docs/specs/ui_patterns.md`, Making, Required, A field and A refusal).
+/// (`docs/specs/components.md`, Form dialog, Required, A field and A refusal).
 pub(super) struct FieldShown {
     required: bool,
     /// Why Linewright refused it, if it did.
@@ -247,15 +247,14 @@ pub(super) enum Answer<Form: Template> {
     /// not show it.
     Made { blank: Form, shown: MadeShown },
     /// 200 with the form holding what was saved, and the `made` event, on
-    /// which the dialog closes (`docs/specs/ui_patterns.md`, Editing,
-    /// Saving).
+    /// which the dialog closes (`docs/specs/components.md`, Form dialog, Done).
     Saved { form: Form },
     /// The form as sent, with its refusal.
     Refused { status: StatusCode, form: Form },
 }
 
 /// Whether the dialog's screen shows what it made
-/// (`docs/specs/ui_patterns.md`, Making, What was made).
+/// (`docs/specs/design_system.md`, Actions, What was made).
 pub(super) enum MadeShown {
     /// The screen shows it, so says nothing of it.
     OnScreen,
@@ -306,7 +305,7 @@ fn made_said(said: &Html) -> String {
 }
 
 /// `said` of what was made or removed, as a daisyUI success alert
-/// (`docs/specs/ui_patterns.md`, Making).
+/// (`docs/specs/components.md`, Success message).
 pub(super) fn success(said: &Html) -> Html {
     html::built(format!(
         r#"<div class="alert alert-success" role="status"><span>{said}</span></div>"#

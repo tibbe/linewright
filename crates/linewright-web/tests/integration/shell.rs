@@ -1,6 +1,6 @@
 //! The shell around every screen: its breadcrumbs, its heading, its buttons
-//! and its title (`docs/specs/shell.md`; `docs/specs/ui_patterns.md`,
-//! Titles and Headings).
+//! and its title (`docs/specs/shell.md`; `docs/specs/design_system.md`,
+//! Screens, Titles, and `docs/specs/components.md`, Heading).
 
 use linewright_core::domain::Issue;
 use serde_json::json;
@@ -219,7 +219,7 @@ async fn the_boards_title_leads_with_its_count_of_cards_in_needs_a_person() {
     assert_eq!(title(&html), "(1) Board · Linewright");
 }
 
-/// `docs/specs/ui_patterns.md`, Headings.
+/// `docs/specs/components.md`, Heading.
 #[test_log::test(tokio::test)]
 async fn each_screen_of_one_thing_has_a_heading_card_and_no_other_screen_has_one() {
     let pages = with_a_run().await;
@@ -258,7 +258,8 @@ async fn each_screen_of_one_thing_has_a_heading_card_and_no_other_screen_has_one
 }
 
 /// `docs/specs/shell.md`, Layout and The screen's buttons;
-/// `docs/specs/ui_patterns.md`, Buttons and Making.
+/// `docs/specs/components.md`, Button, and `docs/specs/benchmarks.md`,
+/// Benchmarks, New.
 #[test_log::test(tokio::test)]
 async fn the_screens_buttons_sit_at_the_right_of_its_breadcrumbs_or_in_its_heading() {
     let pages = with_benchmark_run().await;
@@ -366,9 +367,9 @@ async fn the_repositorys_name_then_the_notices_then_the_breadcrumbs_lead_the_con
     assert_eq!(text(select(&html, ".drawer-content .repo-name")[0]), REPO);
 }
 
-/// `docs/specs/shell.md`, The name at the top and Breadcrumbs, Their look: the
-/// rows of the name at the top and of the breadcrumbs are at least as tall as a
-/// small button.
+/// `docs/specs/shell.md`, The repository's name and Breadcrumbs: the rows of
+/// the name at the top and of the breadcrumbs are at least as tall as a small
+/// button.
 #[test_log::test(tokio::test)]
 async fn the_rows_of_the_name_at_the_top_and_of_the_breadcrumbs_are_as_tall_as_a_small_button() {
     let pages = Pages::of(a_ticket()).await;
@@ -414,7 +415,7 @@ async fn every_stream_sends_the_shells_regions_first() {
     }
 }
 
-/// `docs/specs/ui_patterns.md`, Making, What was made: the message a
+/// `docs/specs/design_system.md`, Actions, What was made: the message a
 /// dialog's answer sends goes under the heading, into a slot that a page
 /// starts empty and that no stream sends, so it stays until the reader
 /// leaves.

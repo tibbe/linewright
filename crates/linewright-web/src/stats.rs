@@ -10,7 +10,7 @@ pub(super) struct Stat {
 }
 
 /// What a screen shows of a figure that is absent
-/// (`docs/specs/ui_patterns.md`, Screen states, Absent).
+/// (`docs/specs/design_system.md`, Figures, Absent).
 pub(super) const ABSENT: &str = "–";
 
 /// [`ABSENT`], as a value.

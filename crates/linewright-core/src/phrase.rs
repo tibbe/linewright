@@ -11,9 +11,9 @@ use crate::domain::{ItemKind, Number, Timestamp};
 #[schemars(with = "String")]
 pub struct Phrase(Vec<Segment>);
 
-/// What an outcome or a state shows as (`docs/specs/ui_patterns.md`,
-/// Status), each with its own icon and colour
-/// (`docs/specs/ui_patterns.md`, Status).
+/// What an outcome or a state shows as (`docs/specs/design_system.md`, Status),
+/// each with its own icon and colour
+/// (`docs/specs/design_system.md`, Status).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Done,
@@ -26,11 +26,11 @@ pub enum Status {
 
 impl Status {
     /// Its badge, as the classes of the spec's table
-    /// (`docs/specs/ui_patterns.md`, Status): a badge gives each daisyUI
+    /// (`docs/specs/components.md`, Status badge): a badge gives each daisyUI
     /// colour its own colour of text, which reads on it in either theme
     /// (<https://daisyui.com/docs/colors/>), while paused, whose `base-content/60` is a text colour with no
     /// content colour of its own, is a paused badge
-    /// (`docs/specs/components.md`, Paused badge), an outline in that colour
+    /// (`docs/specs/components.md`, Status badge), an outline in that colour
     /// with no fill. Written whole, since Tailwind finds the classes the
     /// stylesheet needs by scanning the sources' text
     /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
@@ -247,7 +247,7 @@ impl fmt::Display for Phrase {
 }
 
 /// `seconds` to its two largest units that are not zero, in narrow units, and
-/// `0s` for none (`docs/specs/ui_patterns.md`, Time, Durations): the twin of
+/// `0s` for none (`docs/specs/design_system.md`, Times, Durations): the twin of
 /// `duration()` in `assets/linewright.js`.
 fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
     if seconds == 0 {
@@ -273,7 +273,7 @@ fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
 mod tests {
     use super::*;
 
-    /// `docs/specs/ui_patterns.md`, Status: paused is `base-content/60`,
+    /// `docs/specs/design_system.md`, Status: paused is `base-content/60`,
     /// cancelled `neutral`.
     #[test_log::test]
     fn each_status_has_the_colour_of_the_states_it_shows() {

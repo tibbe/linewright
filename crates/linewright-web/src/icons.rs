@@ -266,7 +266,7 @@ fn view_box_and_paths(source: &'static str) -> (&'static str, String) {
     (view_box, paths)
 }
 
-/// The icon of a status (`docs/specs/ui_patterns.md`, Status).
+/// The icon of a status (`docs/specs/design_system.md`, Status).
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "askama passes a template's values by reference, at any depth"
@@ -282,7 +282,7 @@ pub(super) fn status_icon(status: &Status) -> Icon {
     }
 }
 
-/// The icon of a status, named by the status (`docs/specs/ui_patterns.md`,
+/// The icon of a status, named by the status (`docs/specs/design_system.md`,
 /// Status), as tall as a line and centred on the first line of a flex
 /// container, even where the words beside it wrap.
 #[expect(
@@ -396,8 +396,8 @@ mod tests {
     use super::super::shell::Area;
     use super::*;
 
-    /// `docs/specs/ui_patterns.md`, Icons, Which icon: each part has the icon
-    /// that its section gives it.
+    /// `docs/specs/shell.md`, Navigation, and `docs/specs/design_system.md`,
+    /// Status: each part has the icon that its section gives it.
     #[test_log::test]
     fn each_part_has_the_icon_the_specs_table_gives_it() {
         for (area, icon) in [

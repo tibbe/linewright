@@ -270,7 +270,7 @@ fn foot_button(html: &Html) -> (String, String) {
 }
 
 /// `docs/specs/shell.md`, Navigation, Expanding and collapsing: the foot button
-/// is a small (`docs/specs/ui_patterns.md`, Buttons) `btn-ghost` `btn-circle`,
+/// is a small (`docs/specs/components.md`, Button) `btn-ghost` `btn-circle`,
 /// from `lg` alone, named in a `tooltip-right` for what it does on the
 /// navigation the page is drawn with.
 #[test_log::test(tokio::test)]

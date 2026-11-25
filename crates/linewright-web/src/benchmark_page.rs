@@ -231,7 +231,7 @@ struct Shown {
 }
 
 /// A tab of the benchmark page (`docs/specs/benchmarks.md`, Benchmark, Tabs),
-/// at its own address (`docs/specs/ui_patterns.md`, Tabs, Addresses).
+/// at its own address (`docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BenchmarkTab {
     /// The benchmark runs.
@@ -648,7 +648,7 @@ async fn shown(
 
 /// The page of `benchmark`: its heading, its name with its stage under it
 /// (`docs/specs/benchmarks.md`, Benchmark, Heading), and "Edit" among the
-/// screen's buttons (`docs/specs/ui_patterns.md`, Editing, Edit), its
+/// screen's buttons (`docs/specs/design_system.md`, Actions, Changing), its
 /// stream's on the pages `paging` asks for.
 fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     let heading = Heading {
@@ -665,8 +665,8 @@ fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
 }
 
 /// The task, by its ID, that a benchmark's screen says was removed from it,
-/// under its heading, as it opens once (`docs/specs/ui_patterns.md`,
-/// Confirming, What was removed): the request's `removed` cookie, which the
+/// under its heading, as it opens once (`docs/specs/design_system.md`, Actions,
+/// What was removed): the request's `removed` cookie, which the
 /// removal sets on the benchmark's addresses alone and the screen clears as
 /// it opens. A value that is no task's ID is no task.
 pub(super) struct Removed(Option<TaskId>);
@@ -963,7 +963,7 @@ struct AddForm {
 impl AddForm {
     /// The run it sends and the task, or else the refusal of each field
     /// that does not hold one (`docs/specs/benchmarks.md`, New task;
-    /// `docs/specs/ui_patterns.md`, Making, Required); or else, of a run
+    /// `docs/specs/components.md`, Form dialog, Required); or else, of a run
     /// that does not read, its refusal above the buttons, as a run's.
     fn checked(&self) -> Result<(RunId, Task), making::Refusal<NewTaskField>> {
         let run = if self.run.trim().is_empty() {
@@ -1072,7 +1072,7 @@ struct RemoveForm {
 
 /// Removes the task the form in `body` names by its ID from benchmark `id`, and
 /// opens the benchmark's Tasks, which says so once
-/// (`docs/specs/ui_patterns.md`, Confirming, What was removed): by
+/// (`docs/specs/design_system.md`, Actions, What was removed): by
 /// `HX-Redirect` for htmx, and otherwise by a redirect. Refused, removing
 /// nothing, unless the browser shows the request came from the web UI's own
 /// pages, and answered then with what the page says of it.

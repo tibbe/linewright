@@ -1,4 +1,4 @@
-//! A table in its card (`docs/specs/ui_patterns.md`, Tables), which the
+//! A table in its card (`docs/specs/components.md`, Table), which the
 //! `table_card` macro draws.
 
 /// What a column holds, as far as it decides how the column aligns.
@@ -46,7 +46,7 @@ pub(super) enum Part {
     Table,
 }
 
-/// A row's "View" (`docs/specs/ui_patterns.md`, Tables, A row's screen),
+/// A row's "View" (`docs/specs/components.md`, Table, A row's screen),
 /// linking to the screen of what the row stands for, which the `row_view`
 /// macro draws.
 pub(super) struct View {
@@ -56,7 +56,7 @@ pub(super) struct View {
     pub(super) name: String,
 }
 
-/// What a row opens to in place (`docs/specs/ui_patterns.md`, Tables,
+/// What a row opens to in place (`docs/specs/benchmarks.md`, Benchmark run,
 /// Opening in place), which the `fold_cell` macro draws in the row's leading
 /// cell.
 pub(super) enum Fold {

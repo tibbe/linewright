@@ -1,7 +1,8 @@
 //! What every screen has around it (`docs/specs/shell.md`): the navigation,
 //! the notices, the breadcrumbs, the heading card with what a dialog made
 //! under it, and the screen's buttons, and each screen's title
-//! (`docs/specs/ui_patterns.md`, Titles and Headings).
+//! (`docs/specs/design_system.md`, Screens, Titles, and
+//! `docs/specs/components.md`, Heading).
 
 use std::convert::Infallible;
 
@@ -205,7 +206,7 @@ pub(super) async fn remember_navigation(body: Bytes) -> Response {
 }
 
 /// Which of the spec's kinds of screen a page is (`docs/specs/shell.md`,
-/// Breadcrumbs; `docs/specs/ui_patterns.md`, Headings), which decides its
+/// Breadcrumbs; `docs/specs/components.md`, Heading), which decides its
 /// breadcrumbs, its heading card and its title.
 #[derive(Clone)]
 pub(super) enum Place {
@@ -250,7 +251,7 @@ impl Thing {
     }
 }
 
-/// A heading card (`docs/specs/ui_patterns.md`, Headings).
+/// A heading card (`docs/specs/components.md`, Heading).
 #[derive(Clone)]
 pub(super) struct Heading {
     /// Plain text, for the screen's title and for the crumb of a screen
@@ -386,7 +387,7 @@ impl Place {
     }
 
     /// The screen's title, such as "Benchmark run 14 · Linewright"
-    /// (`docs/specs/ui_patterns.md`, Titles).
+    /// (`docs/specs/design_system.md`, Screens, Titles).
     pub(super) fn title(&self) -> String {
         let name = match self {
             Place::Navigation(area) => area.name().to_string(),
@@ -669,7 +670,7 @@ struct ButtonsRegion<'a> {
 /// screen's buttons. Each that `page` lacks is sent empty, so that its id is
 /// always there to morph. The `#made` under the heading card is none of them,
 /// so that what a dialog made stays there until the reader leaves
-/// (`docs/specs/ui_patterns.md`, Making, What was made).
+/// (`docs/specs/design_system.md`, Actions, What was made).
 pub(super) fn regions(frame: &Frame, page: &Page) -> Vec<(&'static str, String)> {
     vec![
         holds(frame),
@@ -721,8 +722,8 @@ mod tests {
         CrumbShown { name, href: None }
     }
 
-    /// `docs/specs/shell.md`, Breadcrumbs, Names; `docs/specs/ui_patterns.md`,
-    /// Titles.
+    /// `docs/specs/shell.md`, Breadcrumbs, Names; `docs/specs/design_system.md`,
+    /// Screens, Titles.
     #[test_log::test]
     fn a_screen_of_the_navigation_ends_its_crumbs_in_what_it_lists_and_is_titled_by_its_area() {
         let cases = [

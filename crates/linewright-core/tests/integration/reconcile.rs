@@ -1986,7 +1986,7 @@ fn checks_that_never_complete_hand_the_pull_request_back_at_the_ci_timeout() {
     ));
 }
 
-/// `docs/specs/ui_patterns.md`, Time, Durations.
+/// `docs/specs/design_system.md`, Times, Durations.
 #[test_log::test]
 fn the_ci_timeout_hand_back_says_the_timeout_to_its_two_largest_units() {
     let mut pr = pull(20, 2);

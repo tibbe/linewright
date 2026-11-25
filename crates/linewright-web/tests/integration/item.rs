@@ -135,7 +135,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     assert_badges_hold_no_words(&html, "#item dl");
 }
 
-/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
+/// `docs/specs/shell.md`, No such thing.
 #[test_log::test(tokio::test)]
 async fn the_item_page_of_no_item_says_there_is_none() {
     let pages = Pages::of(for_the_maintainer()).await;

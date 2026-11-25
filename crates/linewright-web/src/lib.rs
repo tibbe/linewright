@@ -355,8 +355,8 @@ struct Page {
     /// The navigation it draws from Tailwind's `lg` width.
     navigation: Navigation,
     /// What the screen says under its heading of what was made or removed
-    /// (`docs/specs/ui_patterns.md`, Making, What was made, and Confirming,
-    /// What was removed), as it opens.
+    /// (`docs/specs/design_system.md`, Actions, What was made and What was
+    /// removed), as it opens.
     said: Option<html::Html>,
     assets: PageAssets,
 }
@@ -517,7 +517,7 @@ fn benchmark_path(id: BenchmarkId) -> String {
 }
 
 /// The path of tab `tab` of benchmark `id`'s page
-/// (`docs/specs/ui_patterns.md`, Tabs, Addresses).
+/// (`docs/specs/benchmarks.md`, Benchmark, Tabs, Addresses).
 fn benchmark_tab_path(id: BenchmarkId, tab: BenchmarkTab) -> String {
     format!("{}/{}", benchmark_path(id), tab.segment())
 }
@@ -562,7 +562,7 @@ fn with_query(path: &str, query: &str) -> String {
 }
 
 /// A filter's field, if it is set: an empty one is unset
-/// (`docs/specs/ui_patterns.md`, Filters, Unset).
+/// (`docs/specs/components.md`, Filters, Unset).
 fn given(field: &str) -> Option<&str> {
     Some(field).filter(|field| !field.is_empty())
 }

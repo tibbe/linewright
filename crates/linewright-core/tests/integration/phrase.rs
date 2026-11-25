@@ -44,7 +44,7 @@ fn an_item_is_an_issue_or_a_pull_request_and_reads_as_its_number_alike() {
     assert_eq!(phrase.to_string(), "#7 closed in #8");
 }
 
-/// `docs/specs/ui_patterns.md`, Time, Durations.
+/// `docs/specs/design_system.md`, Times, Durations.
 #[test_log::test]
 fn a_duration_reads_as_its_two_largest_units_that_are_not_zero() {
     let shown = [45, 103, 10_929, 86_700]

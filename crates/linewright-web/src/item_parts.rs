@@ -11,7 +11,7 @@ use linewright_core::domain::{ItemKind, Number};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Cut {
     /// Cut to fit its line, whole in the page's tooltip while it is cut
-    /// (`docs/specs/ui_patterns.md`, Layout).
+    /// (`docs/specs/design_system.md`, Layout, Hover and focus).
     ToFit,
     /// Wrapping as the text around it does.
     Wrap,

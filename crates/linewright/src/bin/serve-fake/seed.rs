@@ -812,7 +812,7 @@ pub async fn interrupted_run(work_dir: &Path) -> Result<()> {
 }
 
 /// How many earlier runs [`earlier_runs`] records, enough for Runs to show
-/// more than one page (`docs/specs/ui_patterns.md`, Tables, Pages).
+/// more than one page (`docs/specs/components.md`, Table, Pages).
 const EARLIER_RUNS: i64 = 60;
 
 /// Records the earlier triage runs of the tasks' issue, each done in a minute,
