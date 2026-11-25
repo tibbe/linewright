@@ -7,13 +7,13 @@
 {%- if let Some(google) = google %}
 <form method="post" action="{{ google.action }}">
 <input type="hidden" name="{{ for_.field().0 }}" value="{{ for_.field().1 }}">
-<button class="google cursor-pointer rounded-full" type="submit"><picture><source srcset="{{ google.dark }}" media="(prefers-color-scheme: dark)"><img src="{{ google.light }}" width="180" height="40" alt="Sign in with Google"></picture></button>
+<button class="btn btn-md bg-white text-black border-[#e5e5e5]" type="submit">{{ google.mark }}Sign in with Google</button>
 </form>
 {%- endif %}
 {%- if let Some(github) = github %}
 <form method="post" action="{{ github.action }}">
 <input type="hidden" name="{{ for_.field().0 }}" value="{{ for_.field().1 }}">
-<button class="github btn" type="submit">{{ github.mark }}Sign in with GitHub</button>
+<button class="btn btn-md bg-black text-white border-black" type="submit">{{ github.mark }}Sign in with GitHub</button>
 </form>
 {%- endif %}
 </div>

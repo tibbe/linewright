@@ -292,14 +292,11 @@ struct Hashed {
 
 const CSS: &str = "text/css; charset=utf-8";
 const JAVASCRIPT: &str = "text/javascript; charset=utf-8";
-const SVG: &str = "image/svg+xml";
-const ASSETS: [(&str, &str); 6] = [
+const ASSETS: [(&str, &str); 4] = [
     ("linewright.css", CSS),
     ("linewright.js", JAVASCRIPT),
     ("htmx.min.js", JAVASCRIPT),
     ("hx-sse.js", JAVASCRIPT),
-    ("google-sign-in-light.svg", SVG),
-    ("google-sign-in-dark.svg", SVG),
 ];
 
 static HASHED: LazyLock<Hashed> = LazyLock::new(|| {

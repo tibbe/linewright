@@ -31,8 +31,8 @@ use super::authorization_server::{ended, signed_in_for};
 use super::caller::{CrossSite, session_cookie, sessions};
 use super::card_page::CardPage;
 use super::html::Html;
-use super::logos::github_mark;
-use super::{HASHED, cookie_headers, cookie_values};
+use super::logos::sign_in_mark;
+use super::{cookie_headers, cookie_values};
 
 /// The path of Sign in.
 pub(super) const SIGN_IN_PATH: &str = "/sign-in";
@@ -259,24 +259,28 @@ struct SignInPage {
     card: CardPage,
     message: Option<Message>,
     /// Google's button, where Linewright offers Google.
-    google: Option<GoogleButton>,
+    google: Option<ProviderButton>,
     /// GitHub's button, where Linewright offers GitHub.
-    github: Option<GitHubButton>,
+    github: Option<ProviderButton>,
     for_: SignInFor,
 }
 
-/// Google's own button, as Google gives it for each theme.
-struct GoogleButton {
+/// An identity provider's button on Sign in.
+struct ProviderButton {
+    /// Where its form posts to.
     action: String,
-    light: &'static str,
-    dark: &'static str,
+    /// The provider's mark before its label.
+    mark: Html,
 }
 
-/// GitHub's button, with its mark.
-struct GitHubButton {
-    action: String,
-    /// Black in the light theme and white in the dark one.
-    mark: Html,
+impl ProviderButton {
+    /// `provider`'s button, where Linewright offers it.
+    fn offered(sign_in: &SignIn, provider: Provider) -> Option<ProviderButton> {
+        sign_in.providers.offer(provider).then(|| ProviderButton {
+            action: begin_path(provider),
+            mark: sign_in_mark(provider),
+        })
+    }
 }
 
 /// What Sign in says of why the person is on it.
@@ -289,25 +293,11 @@ struct Message {
 
 impl SignInPage {
     fn new(sign_in: &SignIn, sources: &Sources, for_: SignInFor, message: Option<Message>) -> Self {
-        let path = |name| HASHED.names[name].as_str();
         SignInPage {
             card: CardPage::new("Sign in", "sign-in", "Sign in to Linewright", sources),
             message,
-            google: sign_in
-                .providers
-                .offer(Provider::Google)
-                .then(|| GoogleButton {
-                    action: begin_path(Provider::Google),
-                    light: path("google-sign-in-light.svg"),
-                    dark: path("google-sign-in-dark.svg"),
-                }),
-            github: sign_in
-                .providers
-                .offer(Provider::GitHub)
-                .then(|| GitHubButton {
-                    action: begin_path(Provider::GitHub),
-                    mark: github_mark("text-black dark:text-white"),
-                }),
+            google: ProviderButton::offered(sign_in, Provider::Google),
+            github: ProviderButton::offered(sign_in, Provider::GitHub),
             for_,
         }
     }

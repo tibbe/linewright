@@ -17,6 +17,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
     --mount=type=bind,source=crates,target=crates \
     --mount=type=bind,source=briefs,target=briefs \
+    --mount=type=bind,source=docs/specs/assets,target=docs/specs/assets \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked \
