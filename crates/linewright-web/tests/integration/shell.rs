@@ -538,9 +538,12 @@ async fn the_stream_of_a_benchmark_run_page_without_the_cancel_dialog_offers_no_
     );
 }
 
-/// The title and the `h1` of No such thing (`docs/specs/shell.md`, No such
-/// thing).
-const NOT_FOUND: &str = "Not found · Linewright";
+/// The title of No such thing: its name, then the site's
+/// (`docs/specs/design_system.md`, Screens, Titles).
+const NOT_FOUND_TITLE: &str = "Not found · Linewright";
+
+/// The `h1` of No such thing (`docs/specs/shell.md`, No such thing).
+const NOT_FOUND_H1: &str = "Not found";
 
 /// Checks that `status` and `body` are No such thing (`docs/specs/shell.md`,
 /// No such thing), at 404: its page is on No such thing's place, which
@@ -549,11 +552,11 @@ const NOT_FOUND: &str = "Not found · Linewright";
 pub(super) fn assert_not_found(status: u16, body: &str, address: &str) {
     assert_eq!(status, 404, "{address}: {body}");
     let html = Html::parse_document(body);
-    assert_eq!(title(&html), NOT_FOUND, "{address}");
+    assert_eq!(title(&html), NOT_FOUND_TITLE, "{address}");
     let h1 = select(&html, "h1");
     assert_eq!(
         h1.iter().map(|h1| text(*h1)).collect::<Vec<_>>(),
-        [NOT_FOUND],
+        [NOT_FOUND_H1],
         "{address}"
     );
     assert!(
@@ -626,7 +629,11 @@ async fn the_stream_of_no_such_thing_keeps_it_so() {
         assert!(heading.attr("hidden").is_some(), "{address}");
         let crumbs = select(region_of(&first, "crumbs"), "#crumbs")[0];
         assert!(crumbs.attr("hidden").is_some(), "{address}");
-        assert_eq!(title(region_of(&first, "title")), NOT_FOUND, "{address}");
+        assert_eq!(
+            title(region_of(&first, "title")),
+            NOT_FOUND_TITLE,
+            "{address}"
+        );
     }
 }
 
@@ -643,7 +650,7 @@ async fn a_followed_runs_stream_asked_for_once_it_is_gone_streams_no_such_thing(
         .unwrap()
         .unwrap();
 
-    assert_eq!(title(region_of(&regions(&first), "title")), NOT_FOUND);
+    assert_eq!(title(region_of(&regions(&first), "title")), NOT_FOUND_TITLE);
 }
 
 /// `docs/specs/shell.md`, No such thing: a Run page whose run goes away
@@ -677,13 +684,13 @@ async fn a_run_that_goes_away_while_its_page_is_open_becomes_no_such_thing() {
             break sent;
         }
     };
-    assert_eq!(title(region_of(&gone, "title")), NOT_FOUND);
+    assert_eq!(title(region_of(&gone, "title")), NOT_FOUND_TITLE);
     let heading = select(region_of(&gone, "heading"), "#heading")[0];
     assert!(heading.attr("hidden").is_some(), "{}", heading.html());
     let shown = select(region_of(&gone, "run"), "#run h1");
     assert_eq!(
         shown.iter().map(|h1| text(*h1)).collect::<Vec<_>>(),
-        [NOT_FOUND]
+        [NOT_FOUND_H1]
     );
     assert!(has_classes(shown[0], &["text-xl", "font-semibold"]));
 }
