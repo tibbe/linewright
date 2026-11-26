@@ -122,6 +122,4 @@
 The screen that an address opens when nothing is at it: it names no screen,
 or it names an item, run, benchmark, task or benchmark run that does not exist.
 
-- **Title.** "Not found · Linewright".
-- **Text.** "Not found · Linewright", as the page's `h1`, in `text-xl` and
-  `font-semibold`.
+- **Text.** "Not found", as the page's `h1`, in `text-xl` and `font-semibold`.
