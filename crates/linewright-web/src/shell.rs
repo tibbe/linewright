@@ -230,13 +230,13 @@ pub(super) enum Place {
     /// card's title is its `h1`.
     Account { name: &'static str },
     /// No such thing: an address with nothing at it. It has no breadcrumbs
-    /// and no heading card, and is titled "Not found · Linewright".
+    /// and no heading card, and its name, [`NOT_FOUND`], is its `h1`.
     NotFound,
 }
 
-/// The title of No such thing, which is also its `h1`
-/// (`docs/specs/shell.md`, No such thing).
-pub(super) const NOT_FOUND: &str = "Not found · Linewright";
+/// The name of No such thing, as its `h1` shows it (`docs/specs/shell.md`,
+/// No such thing).
+pub(super) const NOT_FOUND: &str = "Not found";
 
 /// A heading card (`docs/specs/components.md`, Heading).
 #[derive(Clone)]
@@ -360,7 +360,7 @@ impl Place {
             Place::Navigation(area) => area.name(),
             Place::Account { name, .. } => name,
             Place::Within { heading, .. } | Place::Alone(heading) => &heading.title,
-            Place::NotFound => return NOT_FOUND.to_string(),
+            Place::NotFound => NOT_FOUND,
         };
         format!("{name} · Linewright")
     }
