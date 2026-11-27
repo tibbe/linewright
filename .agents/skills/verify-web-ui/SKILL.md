@@ -19,8 +19,9 @@ in for GitHub and `fake-claude` standing in for Claude Code, both set up by its
 seed, `crates/linewright/src/bin/serve-fake/seed.rs`. Serve the web UI with it
 alone: `lw serve` works the real repository. Its clock starts at 2026-03-02 09:00 UTC on every
 run. The seed's runs move on as real ones do: its implement session's events
-arrive over about two minutes, and it then stays in flight until `serve-fake`
-stops. Capture a state once the page shows it.
+arrive over about three minutes, with a 40-second wait for the usage limit in
+its turn once it has read the code, and it then stays in flight until
+`serve-fake` stops. Capture a state once the page shows it.
 
 When the page your change touches needs a state the seed lacks, such as an
 item in another lane or a transcript entry of another kind, add it to the
