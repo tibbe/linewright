@@ -84,6 +84,7 @@ async fn serve() -> Result<()> {
     seed::seed(&store).await?;
     seed::benchmarks(&store, &config.work_dir.join(seed::REPO)).await?;
     seed::interrupted_run(&config.work_dir.join(seed::REPO)).await?;
+    seed::waited_run(&config.work_dir.join(seed::REPO)).await?;
     seed::earlier_runs(&config.work_dir.join(seed::REPO)).await?;
     seed::close_done(&store)?;
     if std::env::var_os(UNPOLLED).is_some() {

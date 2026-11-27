@@ -789,26 +789,139 @@ pub async fn interrupted_run(work_dir: &Path) -> Result<()> {
         work_dir.join(&dir).join("output.jsonl"),
         format!("{started}\n{call}\n"),
     )?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(work_dir.join("linewright.db"))
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await?;
-    let row: i64 = sqlx::query_scalar(
-        "INSERT INTO runs (kind, item, stage, n, started_at, ended_at, ending)
-         VALUES ('item', ?, 'design', ?, '2026-03-01T18:00:00Z', '2026-03-01T18:05:00Z', 'failed')
-         RETURNING id",
-    )
-    .bind(i64::try_from(TASKS_ISSUE.0)?)
-    .bind(INTERRUPTED_RUN)
-    .fetch_one(&pool)
-    .await?;
-    sqlx::query("INSERT INTO sessions (run, seq, dir) VALUES (?, 0, ?)")
-        .bind(row)
-        .bind(dir)
-        .execute(&pool)
+    let run = DesignRun {
+        n: INTERRUPTED_RUN,
+        started_at: "2026-03-01T18:00:00Z",
+        ended_at: "2026-03-01T18:05:00Z",
+        ending: "failed",
+    };
+    run.record(work_dir, &dir).await
+}
+
+/// A design run of [`TASKS_ISSUE`] of one session, as the database keeps it.
+struct DesignRun {
+    n: u32,
+    started_at: &'static str,
+    ended_at: &'static str,
+    /// Its ending, by its name in the database.
+    ending: &'static str,
+}
+
+impl DesignRun {
+    /// Records it in the database of `work_dir`, its session's record in
+    /// `dir`.
+    async fn record(&self, work_dir: &Path, dir: &str) -> Result<()> {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(work_dir.join("linewright.db"))
+            .foreign_keys(true);
+        let pool = sqlx::SqlitePool::connect_with(options).await?;
+        let row: i64 = sqlx::query_scalar(
+            "INSERT INTO runs (kind, item, stage, n, started_at, ended_at, ending)
+             VALUES ('item', ?, 'design', ?, ?, ?, ?)
+             RETURNING id",
+        )
+        .bind(i64::try_from(TASKS_ISSUE.0)?)
+        .bind(self.n)
+        .bind(self.started_at)
+        .bind(self.ended_at)
+        .bind(self.ending)
+        .fetch_one(&pool)
         .await?;
-    pool.close().await;
-    Ok(())
+        sqlx::query("INSERT INTO sessions (run, seq, dir) VALUES (?, 0, ?)")
+            .bind(row)
+            .bind(dir)
+            .execute(&pool)
+            .await?;
+        pool.close().await;
+        Ok(())
+    }
+}
+
+/// The design run of [`TASKS_ISSUE`] whose session waited for the usage
+/// limit in its turn and between turns.
+const WAITED_RUN: u32 = 4;
+
+/// Records in the database of `work_dir` the run [`WAITED_RUN`], started
+/// the day before the clock starts, and writes its session's record. Its
+/// session thinks, waiting for the usage limit from 19:00:05 to 19:40:05
+/// with the reset time stated again at 19:30:05, then reads a file. The
+/// harness then ends its turn for the usage limit, and the session waits
+/// from 19:40:20 to 20:00:00, then resumes with a follow-up and answers.
+///
+/// # Errors
+///
+/// When the database or the session's record cannot be written.
+pub async fn waited_run(work_dir: &Path) -> Result<()> {
+    use linewright_core::transcript::{
+        StartedBy, session_ended, turn_ended_marker, turn_marker, usage_limit_waited,
+        usage_limit_waiting,
+    };
+    let at = |at: &str| -> Result<Timestamp> { Ok(at.parse()?) };
+    let event = |timestamp: &str, mut event: Value| {
+        event["timestamp"] = json!(timestamp);
+        event.to_string()
+    };
+    let thinking_tokens = json!({"type": "system", "subtype": "thinking_tokens"}).to_string();
+    let lines = [
+        turn_marker(at("2026-03-01T19:00:00Z")?, StartedBy::Brief),
+        event(
+            "2026-03-01T19:00:02Z",
+            said("I'll read where a session's heading is drawn."),
+        ),
+        thinking_tokens.clone(),
+        usage_limit_waiting(
+            at("2026-03-01T19:00:05Z")?,
+            Some(at("2026-03-01T19:30:00Z")?),
+        ),
+        usage_limit_waiting(
+            at("2026-03-01T19:30:05Z")?,
+            Some(at("2026-03-01T20:00:00Z")?),
+        ),
+        usage_limit_waited(at("2026-03-01T19:40:05Z")?),
+        event(
+            "2026-03-01T19:40:09Z",
+            thinking("The heading is in the run page."),
+        ),
+        event(
+            "2026-03-01T19:40:10Z",
+            called("w1", "Read", &json!({"file_path": "src/run_page.rs"})),
+        ),
+        event("2026-03-01T19:40:12Z", returned("w1", "fn heading")),
+        thinking_tokens,
+        json!({"type": "result", "subtype": "success", "is_error": true, "result": "usage limit"})
+            .to_string(),
+        turn_ended_marker(at("2026-03-01T19:40:15Z")?),
+        usage_limit_waiting(
+            at("2026-03-01T19:40:20Z")?,
+            Some(at("2026-03-01T20:00:00Z")?),
+        ),
+        usage_limit_waited(at("2026-03-01T20:00:00Z")?),
+        turn_marker(at("2026-03-01T20:00:00Z")?, StartedBy::FollowUp),
+        event("2026-03-01T20:00:06Z", said("One ticket covers it.")),
+        turn_ended_marker(at("2026-03-01T20:00:07Z")?),
+        session_ended(at("2026-03-01T20:00:08Z")?),
+    ];
+    let dir = format!("sessions/issue-{}/20260301T190000Z-design", TASKS_ISSUE.0);
+    write_files(
+        work_dir,
+        [
+            (
+                format!("{dir}/output.jsonl"),
+                lines.map(|line| line + "\n").concat(),
+            ),
+            (
+                format!("{dir}/followup-1.md"),
+                "The usage limit has reset. Carry on where you left off.\n".to_string(),
+            ),
+        ],
+    )?;
+    let run = DesignRun {
+        n: WAITED_RUN,
+        started_at: "2026-03-01T19:00:00Z",
+        ended_at: "2026-03-01T20:00:10Z",
+        ending: "done",
+    };
+    run.record(work_dir, &dir).await
 }
 
 /// How many earlier runs [`earlier_runs`] records, enough for Runs to show
