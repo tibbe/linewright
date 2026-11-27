@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    Account, After, CallResult, Change, Changed, Clock, CloneEnded, Course, Entry, EntryAt, Feed,
-    Held, INTERRUPTED, Lasted, Layout, Made, Maintenance, MaintenanceEnded, MaintenanceRan,
+    Account, After, CallResult, Change, Changed, Clock, CloneEnded, Course, End, Entry, EntryAt,
+    Feed, Held, INTERRUPTED, Lasted, Layout, Made, Maintenance, MaintenanceEnded, MaintenanceRan,
     MaintenanceStatus, Numbering, Place, Prompt, ReadTo, START, Session, SessionClone,
-    SessionRecord, Transcript, Turn, What, shown_command, summary, whole_seconds,
+    SessionRecord, Transcript, Turn, Wait, WaitPlace, WaitsShown, What, shown_command, summary,
+    whole_seconds,
 };
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
@@ -161,6 +162,12 @@ pub(crate) enum EntryLine {
     Tool(ToolLine),
     Clone(CloneLine),
     Maintenance(SessionMaintenanceLine),
+    /// A wait for the usage limit that has ended, and how long it lasted,
+    /// where that is known (`docs/specs/runs.md`, Transcripts, Waits for the
+    /// usage limit).
+    Waited {
+        duration_seconds: Option<f64>,
+    },
 }
 
 /// A thought's line: how long it went on and, in full, what its record
@@ -198,7 +205,7 @@ impl Span {
     /// How long something that has ended `lasted`, unless it runs still.
     fn of(lasted: Lasted) -> Option<Span> {
         let (duration_seconds, interrupted) = match lasted {
-            Lasted::Running { .. } => return None,
+            Lasted::Running { .. } | Lasted::Paused { .. } => return None,
             Lasted::Took { seconds } => (seconds, false),
             Lasted::Interrupted { seconds } => (seconds, true),
         };
@@ -245,6 +252,9 @@ pub const THOUGHT: &str = "thought";
 
 /// What a turn's last line says it is.
 pub const WORKED_FOR: &str = "worked for";
+
+/// What the line of a wait for the usage limit says it is.
+pub const WAITED: &str = "waited for the usage limit";
 
 /// The `account` key of a line of an entry whose fields as JSON hold how far
 /// it ran, `course`: there only for one that was interrupted.
@@ -726,7 +736,13 @@ fn keyed_lines(
             }
             entry_lines(
                 &turn.entries,
-                &turn_id,
+                (
+                    &turn_id,
+                    &mut EntryAt {
+                        turn: n,
+                        path: vec![],
+                    },
+                ),
                 &Under::Session,
                 session,
                 (verbosity, reader),
@@ -737,14 +753,17 @@ fn keyed_lines(
                 worked_for_line(session, n, &mut stamper)
                     .map(|line| (format!("{turn_id}/worked-for"), line)),
             );
+            wait_lines(session, &WaitPlace::AfterTurn(n), &mut stamper, &mut lines);
         }
     }
     lines
 }
 
+/// The lines of `entries`, the entries at `place` in their turn, whose IDs
+/// start with `parent`.
 fn entry_lines(
     entries: &[Entry],
-    parent: &str,
+    (parent, place): (&str, &mut EntryAt),
     under: &Under,
     session: &Session,
     (verbosity, reader): (Verbosity, Reader),
@@ -753,6 +772,8 @@ fn entry_lines(
 ) {
     for (i, entry) in entries.iter().enumerate() {
         let id = format!("{parent}/{}", i + 1);
+        place.path.push(i);
+        wait_lines(session, &WaitPlace::Before(place.clone()), stamper, lines);
         if let Some(what) = entry_line(entry, session, verbosity, reader) {
             lines.push((
                 id.clone(),
@@ -763,7 +784,7 @@ fn entry_lines(
             let sub_agent = under.sub_agent(&call.id);
             entry_lines(
                 &call.entries,
-                &id,
+                (&id, place),
                 &sub_agent,
                 session,
                 (verbosity, reader),
@@ -771,12 +792,34 @@ fn entry_lines(
                 lines,
             );
         }
+        place.path.pop();
+    }
+}
+
+/// The lines of the waits of `session` at `place` that have ended, each
+/// with its ID.
+fn wait_lines(
+    session: &Session,
+    place: &WaitPlace,
+    stamper: &mut Stamper,
+    lines: &mut Vec<(String, Line)>,
+) {
+    for (k, wait) in session.waits.iter().enumerate() {
+        if wait.end != End::Going && wait.place == *place {
+            lines.push((
+                format!("{}/wait-{}", stamper.number, k + 1),
+                stamper.wait(session, wait),
+            ));
+        }
     }
 }
 
 struct Stamper {
     number: usize,
     clock: Clock,
+    /// Its session's waits shown so far, as a followed transcript shows
+    /// them.
+    waits: WaitsShown,
 }
 
 impl Stamper {
@@ -784,7 +827,26 @@ impl Stamper {
         Stamper {
             number,
             clock: Clock::new(started_at),
+            waits: WaitsShown::default(),
         }
+    }
+
+    /// The line of `wait`, a wait of `session`'s, as it shows at its place.
+    fn wait(&mut self, session: &Session, wait: &Wait) -> Line {
+        let under = match &wait.place {
+            WaitPlace::Before(at) => under(session, at),
+            WaitPlace::InTurn(_) | WaitPlace::AfterTurn(_) => Under::Session,
+        };
+        let duration_seconds = wait.seconds();
+        self.line(Some(wait.at), under, EntryLine::Waited { duration_seconds })
+    }
+
+    /// The lines of the waits `waits` of `session`, by their number from 0.
+    fn waits(&mut self, session: &Session, waits: Vec<usize>) -> Vec<Line> {
+        waits
+            .into_iter()
+            .map(|k| self.wait(session, &session.waits[k]))
+            .collect()
     }
 
     /// That the session started at `at`, unless when is already known.
@@ -885,7 +947,7 @@ fn entry_line(
     Some(match &entry.what {
         What::Message(text) => EntryLine::Message { text: text.clone() },
         What::Thought(thought) => EntryLine::Thought(ThoughtLine {
-            span: Span::of(thought.lasted(entry.at))?,
+            span: Span::of(session.thought_lasted(thought, entry.at))?,
             in_full: match &thought.held {
                 _ if !full => None,
                 Held::Text(text) if text.trim().is_empty() => None,
@@ -1002,7 +1064,14 @@ impl Layout for LineLayout<'_> {
                 .push(Stamper::new(read.session, session.started_at));
         }
         let stamper = &mut self.stampers[read.session - 1];
-        if let Some(line) = changed_line(change, session, self.verbosity, stamper) {
+        stamper.started(session.started_at);
+        let before = stamper.waits.before(&change, session);
+        let mut lines = stamper.waits(session, before);
+        let after_change = change.clone();
+        lines.extend(changed_line(change, session, self.verbosity, stamper));
+        let after = stamper.waits.after(&after_change, session);
+        lines.extend(stamper.waits(session, after));
+        for line in lines {
             self.made(read, line);
         }
     }
@@ -1026,7 +1095,10 @@ fn changed_line(
         Change::TurnEnded(turn) => return worked_for_line(session, turn, stamper),
         Change::Added(place) => (place, None),
         Change::Ended(place, ended_at) => (place, Some(ended_at)),
-        Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded => return None,
+        Change::WaitBegan(_)
+        | Change::WaitRestated(_)
+        | Change::WaitEnded(_)
+        | Change::SessionEnded => return None,
     };
     let at = match place {
         Place::Clone => {
@@ -1113,6 +1185,12 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
             },
         ),
         EntryLine::WorkedFor(span) => (span.worked_for(), vec![]),
+        EntryLine::Waited { duration_seconds } => (
+            duration_seconds.map_or(WAITED.to_string(), |seconds| {
+                with_duration(WAITED, whole_seconds(seconds))
+            }),
+            vec![],
+        ),
         EntryLine::Context { text } => block("context: ", text),
         EntryLine::Event { event } => (format!("event: {event}"), vec![]),
         EntryLine::Other { other } => (format!("other: {other}"), vec![]),
@@ -1276,7 +1354,9 @@ pub fn json_line(line: &Line) -> Option<String> {
                     other: other.clone(),
                 },
             }))),
-            EntryLine::Thought(_) | EntryLine::WorkedFor(_) => return None,
+            EntryLine::Thought(_) | EntryLine::WorkedFor(_) | EntryLine::Waited { .. } => {
+                return None;
+            }
             EntryLine::Brief { .. }
             | EntryLine::FollowUp { .. }
             | EntryLine::Message { .. }

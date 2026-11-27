@@ -707,13 +707,10 @@ async fn take_turn(
         let until = limit.wait_until(now);
         warn!(subject, %resets_at, "session refused for the usage limit");
         info!(subject, %resets_at, %until, "waiting out the usage limit");
-        let (waiting, _) = spec.waits.begin(now, Some(resets_at));
-        append_event(
-            &spec.record,
-            &transcript::usage_limit_waiting(now, Some(until)),
-        )
-        .context("writing the wait for the usage limit")
-        .map_err(infra)?;
+        let (waiting, line) = spec.waits.begin(now, Some(resets_at));
+        append_event(&spec.record, &line)
+            .context("writing the wait for the usage limit")
+            .map_err(infra)?;
         cancellable(ctx, sessions.clock.sleep_until(until)).await?;
         append_event(&spec.record, &waiting.end(sessions.clock.now()))
             .context("writing the end of the wait for the usage limit")

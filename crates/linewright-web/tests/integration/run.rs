@@ -1714,3 +1714,206 @@ async fn the_working_step_goes_once_the_run_ends() {
         .collect();
     assert_eq!(step, [None]);
 }
+
+/// The assistant's thought, with no text, that ends `at`.
+fn thought_at(at: &str) -> serde_json::Value {
+    json!({
+        "type": "assistant",
+        "timestamp": at,
+        "message": {"content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
+    })
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit.
+#[test_log::test(tokio::test)]
+async fn the_run_page_shows_each_wait_for_the_usage_limit_before_the_step_that_waited_or_the_follow_up()
+ {
+    let thinking_tokens = json!({"type": "system", "subtype": "thinking_tokens"});
+    let output = [
+        turn_marker(at("2026-10-14T12:00:00Z"), StartedBy::Brief),
+        thinking_tokens.to_string(),
+        usage_limit_waiting(at("2026-10-14T12:00:01Z"), Some(at("2026-10-14T14:30:00Z"))),
+        usage_limit_waited(at("2026-10-14T12:10:01Z")),
+        thought_at("2026-10-14T12:10:04Z").to_string(),
+        turn_ended_marker(at("2026-10-14T12:10:05Z")),
+        usage_limit_waiting(at("2026-10-14T12:10:06Z"), None),
+        usage_limit_waited(at("2026-10-14T12:20:06Z")),
+        turn_marker(at("2026-10-14T12:20:06Z"), StartedBy::FollowUp),
+        session_ended(at("2026-10-14T12:20:10Z")),
+    ]
+    .map(|line| line + "\n")
+    .concat();
+    let pages = triaged(
+        &output,
+        json!({"at": "2026-10-14T12:25:00Z", "ending": "handed-back"}),
+    )
+    .await;
+
+    let html = pages.page("/runs/1/triage-1").await;
+
+    let lines: Vec<String> = entry_lines(&html)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "waited for the usage limit | 10m",
+            "thought | 4s",
+            "worked for | 4s",
+            "waited for the usage limit | 10m",
+            "follow-up:",
+            "worked for, interrupted | 4s",
+        ],
+        "each other time leaves out the waits"
+    );
+    assert_eq!(
+        session_heading(&html),
+        "session 1: started 2026-10-14 12:00:00 UTC | 10s"
+    );
+}
+
+/// `docs/specs/components.md`, Transcript, Working;
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit and
+/// Followed.
+#[test_log::test(tokio::test)]
+async fn a_followed_session_that_waits_in_its_turn_says_so_until_the_reset_stated_last_then_shows_the_wait()
+ {
+    let pages = triaged(&cloned_and_called(), serde_json::Value::Null).await;
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+    let read = pages.page("/runs/1/triage-1").await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    let output = format!("{TRIAGING}/output.jsonl");
+    let mut next = async |line: String, last: &str| {
+        pages.append(&output, &format!("{line}\n"));
+        let sent = transcript_events(&mut events, |sent| {
+            sent.iter().any(|(_, data)| data.contains(last))
+        })
+        .await;
+        sent.iter()
+            .flat_map(|(_, data)| patches(data))
+            .map(|(target, swap, html)| match target.as_str() {
+                "#s1-working" => (target, working_step(&html)),
+                "#s1-heading" => (target, Some(session_heading(&html))),
+                _ => (
+                    format!("{target} {swap}"),
+                    Some(entry_lines(&html)[0].1.clone()),
+                ),
+            })
+            .collect::<Vec<_>>()
+    };
+    let step = |step: &str| ("#s1-working".to_string(), Some(step.to_string()));
+    let heading = |duration: &str| {
+        (
+            "#s1-heading".to_string(),
+            Some(format!(
+                "session 1: started 2026-10-14 12:00:00 UTC | {duration}"
+            )),
+        )
+    };
+
+    let waiting = next(
+        usage_limit_waiting(at("2026-10-14T12:00:30Z"), Some(at("2026-10-14T14:30:00Z"))),
+        "#s1-working",
+    )
+    .await;
+    let restated = next(
+        usage_limit_waiting(at("2026-10-14T12:05:00Z"), Some(at("2026-10-14T15:00:00Z"))),
+        "#s1-working",
+    )
+    .await;
+    let waited = next(
+        usage_limit_waited(at("2026-10-14T12:10:30Z")),
+        "#s1-working",
+    )
+    .await;
+    let thought = next(thought_at("2026-10-14T12:10:34Z").to_string(), "thought").await;
+    let waiting_with_no_reset = next(
+        usage_limit_waiting(at("2026-10-14T12:10:40Z"), None),
+        "#s1-working",
+    )
+    .await;
+
+    assert_eq!(
+        waiting,
+        [
+            heading("30s"),
+            step(
+                "waiting for the usage limit, until 2026-10-14 14:30:00 UTC | 28s @ 2026-10-14T14:30:00Z"
+            )
+        ]
+    );
+    assert_eq!(
+        restated,
+        [step(
+            "waiting for the usage limit, until 2026-10-14 15:00:00 UTC | 28s @ 2026-10-14T15:00:00Z"
+        )],
+        "the reset time stated last"
+    );
+    assert_eq!(
+        waited,
+        [
+            heading("since 2026-10-14T12:10:00Z"),
+            step("working | since 2026-10-14T12:10:02Z")
+        ],
+        "the turn's time moves on by the 10m waited"
+    );
+    assert_eq!(
+        thought,
+        [
+            (
+                "#s1-entries beforeend".to_string(),
+                Some("waited for the usage limit | 10m".to_string())
+            ),
+            (
+                "#s1-entries beforeend".to_string(),
+                Some("thought | 9s".to_string())
+            ),
+        ],
+        "12:00:25 to 12:10:34, but for the 10m waited"
+    );
+    assert_eq!(
+        waiting_with_no_reset,
+        [heading("40s"), step("waiting for the usage limit | 38s")]
+    );
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit;
+/// `docs/specs/components.md`, Transcript, Durations.
+#[test_log::test(tokio::test)]
+async fn a_followed_calls_time_holds_still_while_its_session_waits_and_moves_on_by_the_wait() {
+    let calling = format!(
+        "{}{}\n{}\n",
+        cloning("2026-10-14T12:00:00Z", 2.0, None),
+        turn_marker(at("2026-10-14T12:00:02Z"), StartedBy::Brief),
+        bash_call("2026-10-14T12:00:20Z", "t1", "cargo test"),
+    );
+    let pages = triaged(&calling, serde_json::Value::Null).await;
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+    let read = pages.page("/runs/1/triage-1").await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    let output = format!("{TRIAGING}/output.jsonl");
+    let mut call_line = async |line: String| {
+        pages.append(&output, &format!("{line}\n"));
+        let sent = transcript_events(&mut events, |sent| {
+            sent.iter().any(|(_, data)| data.contains("s1-e2-line"))
+        })
+        .await;
+        sent.iter()
+            .flat_map(|(_, data)| patches(data))
+            .filter(|(target, _, _)| target == "#s1-e2-line")
+            .map(|(_, _, html)| read_line(select(&html, ".line")[0], usize::MAX))
+            .collect::<Vec<_>>()
+    };
+
+    let waiting = call_line(usage_limit_waiting(at("2026-10-14T12:00:30Z"), None)).await;
+    let waited = call_line(usage_limit_waited(at("2026-10-14T12:10:30Z"))).await;
+
+    assert_eq!(waiting, ["Bash(cargo test) → running | 10s"]);
+    assert_eq!(
+        waited,
+        ["Bash(cargo test) → running | since 2026-10-14T12:10:20Z"]
+    );
+}
