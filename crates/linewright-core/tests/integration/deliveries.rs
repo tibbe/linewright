@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use chrono::TimeDelta;
 use linewright_core::domain::{Item, Login, Number, Snapshot};
+use linewright_core::reconcile::WorkKind;
 use linewright_core::status::{Polls, View};
 use linewright_core::store::local::LocalStore;
 use linewright_core::testing::*;
@@ -217,5 +218,61 @@ async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     served.store.restore_reads();
 
     eventually(|| claimed(&served.store, issue)).await;
+    served.stop().await;
+}
+
+/// `docs/specs/runs.md`, Holds: an item a hold keeps waiting starts once the
+/// hold ends, here once no session waits for the usage limit, without
+/// waiting for a poll.
+#[test_log::test(tokio::test)]
+async fn an_issue_held_by_the_usage_limit_starts_once_no_session_waits_for_it() {
+    let world = World::new().await;
+    let turns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    world.harness.on(WorkKind::Implement, move |call| {
+        let turn = turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if turn == 0 {
+            return refused_for_the_usage_limit(call);
+        }
+        let file = format!("src/turn-{turn}.txt");
+        commit_in(&call.spec.dir, &[(&file, "work\n")], "Work");
+        Ok(json!({"outcome": "done", "pr_title": "Do it", "pr_body": "Does it."}).to_string())
+    });
+    open_ticket(&world, "Do the thing");
+    let clock = world.clock.clone();
+    let harness = world.harness.clone();
+    let served = serve(world, NEVER).await;
+    eventually(|| served.view().memory.usage_limit.is_some()).await;
+    let held = served.store.open_issue(
+        "maintainer",
+        "Do the other thing",
+        "Please.",
+        &["linewright:designed"],
+    );
+    served
+        .store
+        .label_as("maintainer", held, "ready-for-agent")
+        .unwrap();
+    served
+        .deliver(
+            "issues",
+            json!({"action": "labeled", "issue": {"number": held.0}}),
+        )
+        .await;
+    eventually(|| {
+        served
+            .snapshot()
+            .issue(held)
+            .is_some_and(|issue| issue.labels.iter().any(|l| l == "ready-for-agent"))
+    })
+    .await;
+    let while_held = harness.prompts(WorkKind::Implement).len();
+
+    let now = linewright_core::clock::Clock::now(clock.as_ref());
+    clock.advance(usage_limit_resets_at() - now);
+
+    eventually(|| harness.prompts(WorkKind::Implement).len() == 3).await;
+    assert_eq!(while_held, 1);
+    assert!(claimed(&served.store, held));
+    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }

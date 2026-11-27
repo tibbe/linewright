@@ -14,6 +14,7 @@ use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
 use crate::session_env::Given;
 use crate::trial::GhConfigDir;
+use crate::usage_limit::Waits;
 use crate::work_settings::{Effort, Model};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,8 +66,9 @@ pub struct SessionSpec {
     /// A session starts from these alone, and what the harness sets itself.
     pub environment: Arc<Given>,
     pub gh: GhReach,
-    /// When the session times out, across all its turns.
-    pub deadline: Deadline,
+    /// The session's waits for the usage limit, and when it times out,
+    /// across all its turns.
+    pub waits: Waits,
     /// Told what the harness reports of the session as each turn runs, so
     /// that a turn that never returns has still told it.
     pub report: Reporter,
@@ -115,41 +117,10 @@ impl Reporter {
         (self.report)(reported);
     }
 
-    /// The session ended, the session timeout having counted `time`. Reported
-    /// once.
+    /// The session ended, the session timeout having counted `time`
+    /// ([`crate::usage_limit::Deadline::counted`]). Reported once.
     pub fn ended(&self, time: Duration) {
         (self.end)(time);
-    }
-}
-
-/// When a session times out, and the timeout it was set from: the session
-/// timeout counts from the session's start, less the waits for the usage
-/// limit (docs/specs/runs.md, "Limits").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Deadline {
-    at: tokio::time::Instant,
-    timeout: Duration,
-}
-
-impl Deadline {
-    /// The deadline of a session that starts at `start` with `timeout`.
-    pub fn after(start: tokio::time::Instant, timeout: Duration) -> Deadline {
-        Deadline {
-            at: start + timeout,
-            timeout,
-        }
-    }
-
-    pub fn at(self) -> tokio::time::Instant {
-        self.at
-    }
-
-    /// What the session timeout has counted by `now`.
-    pub fn counted(self, now: tokio::time::Instant) -> Duration {
-        match self.at.checked_duration_since(now) {
-            Some(left) => self.timeout.saturating_sub(left),
-            None => self.timeout.saturating_add(now - self.at),
-        }
     }
 }
 
@@ -190,21 +161,6 @@ impl UsageLimit {
             self.resets_at
         } else {
             now + UsageLimit::SHORT_WAIT
-        }
-    }
-
-    /// The deadline of a session resumed at `woke_at` after waiting out the
-    /// usage limit that refused it at `refused_at`, when its deadline was
-    /// `deadline`: it has the time it had left (docs/specs/runs.md, "Usage
-    /// limit", The refused session).
-    pub fn deadline_after_wait(
-        deadline: Deadline,
-        refused_at: tokio::time::Instant,
-        woke_at: tokio::time::Instant,
-    ) -> Deadline {
-        Deadline {
-            at: woke_at + deadline.at.saturating_duration_since(refused_at),
-            ..deadline
         }
     }
 }

@@ -92,7 +92,7 @@ impl SessionScreen {
             started_at: session.started_at,
             duration_seconds: session.lasted_so_far().map(|lasted| lasted.seconds(now)),
             ran,
-            usage_limit_resets_at: waiting.map(|wait| wait.until),
+            usage_limit_resets_at: waiting.and_then(|wait| wait.until),
             working_seconds: (idle && waiting.is_none())
                 .then(|| session.turn_so_far())
                 .flatten()

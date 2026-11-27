@@ -67,8 +67,8 @@ fn review(author: Option<&str>, stops: Option<Stop>) -> CardLine {
     "paused until `serve` restarts"
 )]
 #[case::paused_by_the_usage_limit(
-    CardLine::Held(Held::Paused(Hold::UsageLimit { resets_at: at("2026-10-01T13:00:00Z") })),
-    "paused until the usage limit resets"
+    CardLine::Held(Held::Paused(Hold::UsageLimit { resets_at: Some(at("2026-10-01T13:00:00Z")) })),
+    "paused until no session waits for it"
 )]
 #[case::paused_by_the_environment(
     CardLine::Held(Held::Paused(Hold::Environment)),

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright_core::domain::Timestamp;
 use linewright_core::factory::FactoryConfig;
-use linewright_core::harness::{GhReach, SessionSpec, UsageLimit};
+use linewright_core::harness::{GhReach, SessionSpec};
 use linewright_core::logs::{KeptRuns, RunRecords, Which};
 use linewright_core::reconcile::WorkKind;
 use linewright_core::runs::files::RunFiles;
@@ -19,15 +19,16 @@ use linewright_core::testing::trial_runs::{self, *};
 use linewright_core::testing::*;
 use linewright_core::transcript;
 use linewright_core::trial::{self, Configuration, ConfigurationRefusal};
+use linewright_core::usage_limit::UsageLimitHeld;
 use linewright_core::work_settings::{Effort, RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
 
 /// A trial's output, how its run ended or why it did not run, and each
-/// usage limit its sessions reported.
+/// value the usage limit's hold took as its sessions waited.
 pub(crate) struct RanTrial {
     pub(crate) out: PathBuf,
     ended: Result<Ending, trial::Unrun>,
-    usage_limits: Vec<UsageLimit>,
+    usage_limits: Vec<Option<UsageLimitHeld>>,
 }
 
 /// Runs the task in `dir` as the benchmark runner does, with the sessions
@@ -59,7 +60,7 @@ pub(crate) async fn ran_trial_with(
     let mut config = config(&under.join("work").join(REPO)).await;
     adjust(&mut config);
     let winding_up = config.winding_up.clone();
-    let (runner_under, mut reported) = trial_runs::under_reporting();
+    let (runner_under, held) = trial_runs::under_reporting();
     let ended = Box::pin(trial::run(
         &task,
         &output,
@@ -70,10 +71,8 @@ pub(crate) async fn ran_trial_with(
     ))
     .await;
     winding_up.wait().await;
-    let mut usage_limits = vec![];
-    while let Ok(limit) = reported.try_recv() {
-        usage_limits.push(limit);
-    }
+    eventually(|| held.values().last().is_none_or(Option::is_none)).await;
+    let usage_limits = held.values();
     RanTrial {
         out,
         ended,
@@ -517,7 +516,8 @@ async fn a_later_trial_from_the_same_head_uses_the_environment_an_earlier_one_bu
 /// applies to a trial as to a run of the pipeline (`docs/specs/runs.md`,
 /// Usage limit).
 #[test_log::test(tokio::test)]
-async fn a_session_refused_for_the_usage_limit_reports_it_and_resumes_once_it_resets() {
+async fn a_session_refused_for_the_usage_limit_holds_runs_while_it_waits_and_resumes_once_it_resets()
+ {
     let mut world = World::new().await;
     let (_, task) = triage_task(&mut world).await;
     let reset = soon_after(Task::open(&task).await.unwrap().start());
@@ -542,7 +542,15 @@ async fn a_session_refused_for_the_usage_limit_reports_it_and_resumes_once_it_re
     assert_eq!(ran_trial.ended.as_ref().unwrap(), &Ending::Done);
     assert_eq!(ran_trial.read("outcome"), "done\n");
     let resets_at = reset.given();
-    assert_eq!(ran_trial.usage_limits, [UsageLimit { resets_at }]);
+    assert_eq!(
+        ran_trial.usage_limits,
+        [
+            Some(UsageLimitHeld {
+                resets_at: Some(resets_at)
+            }),
+            None
+        ]
+    );
     let follow_up = marker("prompts/follow-ups/usage-limit-reset.md", &[]);
     assert_eq!(*followups.lock().unwrap(), [None, Some(follow_up)]);
 }

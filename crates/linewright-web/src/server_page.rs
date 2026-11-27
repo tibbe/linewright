@@ -72,7 +72,10 @@ fn facts(linewright: &Linewright, mut builds: Vec<Html>) -> Vec<Fact<Phrase>> {
             LinewrightFact::UsageLimit { resets_at } => vec![held(
                 Hold::UsageLimit { resets_at },
                 "Usage limit",
-                Phrase::from("in force until ").time(resets_at),
+                match resets_at {
+                    Some(resets_at) => Phrase::from("in force until ").time(resets_at),
+                    None => "in force".into(),
+                },
             )],
             LinewrightFact::UnusableFile(file) => vec![held(
                 Hold::UnusableFile(file.clone()),
@@ -297,6 +300,7 @@ mod tests {
     use super::*;
     use linewright_core::repo_files::FileError;
     use linewright_core::status::DrainShown;
+    use linewright_core::usage_limit::UsageLimitHeld;
     use linewright_core::webhook::Received;
 
     fn at(time: &str) -> linewright_core::domain::Timestamp {
@@ -328,7 +332,7 @@ mod tests {
             serving_since: at("2026-10-01T12:00:00Z"),
             polls: None,
             failed_polls: None,
-            usage_limit_resets_at: None,
+            usage_limit: None,
             unusable_files: vec![],
             drain: None,
             environment: None,
@@ -352,6 +356,20 @@ mod tests {
         );
     }
 
+    /// `docs/specs/runs.md`, Usage limit, No reset time.
+    #[test_log::test]
+    fn a_usage_limit_with_no_reset_time_shows_in_force_without_one() {
+        let linewright = Linewright {
+            usage_limit: Some(UsageLimitHeld { resets_at: None }),
+            ..serving()
+        };
+
+        assert_eq!(
+            worded(&linewright)[2],
+            ("Usage limit", "in force".into(), Some(Status::Paused))
+        );
+    }
+
     #[test_log::test]
     fn every_fact_shows_in_the_tables_order_while_it_holds() {
         let linewright = Linewright {
@@ -365,7 +383,9 @@ mod tests {
                 last_at: at("2026-10-01T12:33:00Z"),
                 last_error: "taking a snapshot: GitHub is down".into(),
             }),
-            usage_limit_resets_at: Some(at("2026-10-01T15:00:00Z")),
+            usage_limit: Some(UsageLimitHeld {
+                resets_at: Some(at("2026-10-01T15:00:00Z")),
+            }),
             unusable_files: vec![FileError {
                 path: ".linewright/config.toml".into(),
                 error: "the setting `max-runs` is the operator's".into(),

@@ -1,22 +1,44 @@
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::mpsc::UnboundedReceiver;
-
-use crate::harness::UsageLimit;
 use crate::session::Cancellation;
 use crate::testing::write_files;
 use crate::trial::{Configuration, Under};
+use crate::usage_limit::{UsageLimitHeld, UsageLimitWaits};
 
 /// What the benchmark runner runs a trial or a scorer under: a cancellation
-/// that nothing else holds, and sessions that wait out the usage limit,
-/// reporting it to the receiver it gives.
-pub fn under_reporting() -> (Under, UnboundedReceiver<UsageLimit>) {
-    let (report_refusal, reported) = tokio::sync::mpsc::unbounded_channel();
+/// that nothing else holds, and sessions whose waits for the usage limit
+/// make a hold, each value of which it gives is kept in, in order, as a task
+/// spawned on the current tokio runtime sees it change.
+pub fn under_reporting() -> (Under, Held) {
+    let usage_limit = UsageLimitWaits::default();
+    let held = Held::default();
+    let mut watched = usage_limit.held();
+    tokio::spawn({
+        let held = held.clone();
+        async move {
+            while watched.changed().await.is_ok() {
+                let now = *watched.borrow_and_update();
+                held.0.lock().unwrap().push(now);
+            }
+        }
+    });
     let under = Under {
         cancel: Cancellation::default(),
-        report_refusal,
+        usage_limit,
     };
-    (under, reported)
+    (under, held)
+}
+
+/// The values a usage limit's hold took, in order.
+#[derive(Clone, Debug, Default)]
+pub struct Held(Arc<Mutex<Vec<Option<UsageLimitHeld>>>>);
+
+impl Held {
+    /// The values so far.
+    pub fn values(&self) -> Vec<Option<UsageLimitHeld>> {
+        self.0.lock().unwrap().clone()
+    }
 }
 
 /// A usage limit's reset a second after the moment it is asked for, as the
@@ -54,9 +76,13 @@ impl SoonAfter {
     }
 }
 
-/// [`under_reporting`], whose reports nothing reads.
+/// What the benchmark runner runs a trial or a scorer under, with a hold
+/// that nothing watches.
 pub fn under_unread() -> Under {
-    under_reporting().0
+    Under {
+        cancel: Cancellation::default(),
+        usage_limit: UsageLimitWaits::default(),
+    }
 }
 
 /// The configuration in `dir`, holding `files` by their paths in it.

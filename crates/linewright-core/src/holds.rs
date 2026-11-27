@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::Timestamp;
 use crate::reconcile::{Memory, Wait};
 use crate::repo_files::{self, FileError, Unusable};
+use crate::usage_limit::UsageLimitHeld;
 use crate::work_settings::RunKind;
 
 /// A hold, ordered by its rank.
@@ -15,7 +16,7 @@ use crate::work_settings::RunKind;
 #[serde(rename_all = "kebab-case")]
 pub enum Hold {
     Drain,
-    UsageLimit { resets_at: Timestamp },
+    UsageLimit { resets_at: Option<Timestamp> },
     Environment,
     File(FileError),
 }
@@ -77,7 +78,7 @@ impl From<Hold> for Wait {
 #[serde(rename_all = "kebab-case")]
 pub enum BenchmarkRunHold {
     Drain,
-    UsageLimit { resets_at: Timestamp },
+    UsageLimit { resets_at: Option<Timestamp> },
 }
 
 impl From<BenchmarkRunHold> for Hold {
@@ -93,21 +94,18 @@ impl From<BenchmarkRunHold> for Hold {
 #[derive(Clone, Debug)]
 pub struct InForce<'a> {
     drain: bool,
-    usage_limit: Option<Timestamp>,
+    usage_limit: Option<UsageLimitHeld>,
     environment: bool,
     unusable: &'a [Unusable],
 }
 
 impl<'a> InForce<'a> {
-    /// The holds in force at `now`, by `memory` and the files of the
-    /// repository's Linewright cannot use, `unusable`.
-    pub fn of(memory: &Memory, now: Timestamp, unusable: &'a [Unusable]) -> InForce<'a> {
+    /// The holds in force, by `memory` and the files of the repository's
+    /// Linewright cannot use, `unusable`.
+    pub fn of(memory: &Memory, unusable: &'a [Unusable]) -> InForce<'a> {
         InForce {
             drain: memory.drain.is_some(),
-            usage_limit: memory
-                .usage_limit
-                .filter(|_| memory.holds_starts(now))
-                .map(|limit| limit.resets_at),
+            usage_limit: memory.usage_limit,
             environment: memory.awaits_environment,
             unusable,
         }
@@ -119,7 +117,7 @@ impl<'a> InForce<'a> {
         let mut holds: Vec<Hold> = [
             self.drain.then_some(Hold::Drain),
             self.usage_limit
-                .map(|resets_at| Hold::UsageLimit { resets_at }),
+                .map(|UsageLimitHeld { resets_at }| Hold::UsageLimit { resets_at }),
             self.environment.then_some(Hold::Environment),
         ]
         .into_iter()
@@ -141,7 +139,7 @@ impl<'a> InForce<'a> {
             return Some(BenchmarkRunHold::Drain);
         }
         self.usage_limit
-            .map(|resets_at| BenchmarkRunHold::UsageLimit { resets_at })
+            .map(|UsageLimitHeld { resets_at }| BenchmarkRunHold::UsageLimit { resets_at })
     }
 
     /// The hold over every claim, if one is in force.
@@ -181,7 +179,7 @@ mod tests {
             (Hold::Environment, "the environment"),
             (
                 Hold::UsageLimit {
-                    resets_at: "2026-11-03T14:30:00Z".parse().unwrap(),
+                    resets_at: Some("2026-11-03T14:30:00Z".parse().unwrap()),
                 },
                 "the usage limit",
             ),

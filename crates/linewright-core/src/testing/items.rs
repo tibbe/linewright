@@ -11,13 +11,13 @@ use crate::domain::{
     MergeMethod, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability, Snapshot,
     SubIssue, SubIssueState, Timestamp, label,
 };
-use crate::harness::UsageLimit;
 use crate::prompts::{Ticket, TicketRead};
 use crate::reconcile::{Drain, LiveRun, Memory, Policy, Subject, WorkKind};
 use crate::runs::InFlight;
 use crate::spec_glob::SpecGlob;
 use crate::status::{Polls, View};
 use crate::store::AnyItem;
+use crate::usage_limit::UsageLimitHeld;
 
 pub fn policy() -> Policy {
     Policy {
@@ -184,8 +184,8 @@ pub fn at_max_runs(view: View) -> View {
 
 pub fn limited_until(resets_at: &str) -> Memory {
     Memory {
-        usage_limit: Some(UsageLimit {
-            resets_at: at(resets_at),
+        usage_limit: Some(UsageLimitHeld {
+            resets_at: Some(at(resets_at)),
         }),
         ..Memory::default()
     }

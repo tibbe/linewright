@@ -799,7 +799,7 @@ async fn run(
         command: settings.command.as_str(),
         dir: &repo,
         environment: builder.variables(&tmp),
-        deadline: tokio::time::Instant::now() + settings.timeout,
+        deadline: Box::pin(tokio::time::sleep(settings.timeout)),
         log: &dir.join(kept::OUTPUT),
     };
     let (ran, leftovers) = bash_command::run(

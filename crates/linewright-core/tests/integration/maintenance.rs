@@ -201,11 +201,16 @@ async fn the_maintenance_commands_time_counts_against_its_sessions_timeout() {
         });
     })
     .await;
-    let left = Arc::new(Mutex::new(None));
+    let counted = Arc::new(Mutex::new(None));
     world.harness.on(WorkKind::Triage, {
-        let left = left.clone();
+        let counted = counted.clone();
         move |call| {
-            *left.lock().unwrap() = Some(call.spec.deadline.at() - tokio::time::Instant::now());
+            *counted.lock().unwrap() = Some(
+                call.spec
+                    .waits
+                    .deadline()
+                    .counted(tokio::time::Instant::now()),
+            );
             Ok(json!({
                 "outcome": "ready-for-agent",
                 "category": "bug",
@@ -218,9 +223,9 @@ async fn the_maintenance_commands_time_counts_against_its_sessions_timeout() {
 
     world.poll().await;
 
-    let left = left.lock().unwrap().expect("the session started");
-    assert!(left <= Duration::from_secs(8), "{left:?}");
-    assert!(left > Duration::from_secs(5), "{left:?}");
+    let counted = counted.lock().unwrap().expect("the session started");
+    assert!(counted >= Duration::from_secs(2), "{counted:?}");
+    assert!(counted < Duration::from_secs(5), "{counted:?}");
 }
 
 #[test_log::test(tokio::test)]

@@ -365,7 +365,11 @@ pub fn clone_ended(at: Timestamp, duration_seconds: f64, error: Option<&str>) ->
 #[serde(tag = "type")]
 enum SessionEvent {
     #[serde(rename = "linewright-usage-limit")]
-    Waiting { at: Timestamp, until: Timestamp },
+    Waiting {
+        at: Timestamp,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<Timestamp>,
+    },
     #[serde(rename = "linewright-usage-limit-ended")]
     Waited { at: Timestamp },
     #[serde(rename = "linewright-session-ended")]
@@ -377,9 +381,9 @@ pub fn session_ended(at: Timestamp) -> String {
     serde_json::to_string(&SessionEvent::Ended { at }).expect("a session event serializes")
 }
 
-/// The line that says the session started `at` to wait out the usage limit
-/// `until` then.
-pub fn usage_limit_waiting(at: Timestamp, until: Timestamp) -> String {
+/// The line that says the session waits for the usage limit `at`, `until`
+/// then where a reset time is known.
+pub fn usage_limit_waiting(at: Timestamp, until: Option<Timestamp>) -> String {
     serde_json::to_string(&SessionEvent::Waiting { at, until }).expect("a session event serializes")
 }
 
@@ -567,8 +571,8 @@ impl End {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wait {
     pub at: Timestamp,
-    /// When it was to end.
-    pub until: Timestamp,
+    /// When it was to end, where a reset time was stated.
+    pub until: Option<Timestamp>,
     pub end: End,
 }
 

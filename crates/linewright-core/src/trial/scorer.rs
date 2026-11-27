@@ -711,7 +711,7 @@ async fn scorer_in(
         harness,
         config,
         own.clones(),
-        &under.report_refusal,
+        &under.usage_limit,
     );
     let with = RunWith {
         briefs: setting.repo.briefs.clone(),

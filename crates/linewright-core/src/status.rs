@@ -19,6 +19,7 @@ use crate::repo_files::{FileError, Unusable};
 use crate::runs::{
     InFlight, Recorded, RunId, RunInFlight, RunOf, StartedBy, describe_start, last_of_automation,
 };
+use crate::usage_limit::UsageLimitHeld;
 use crate::webhook::Received;
 
 #[derive(Clone, Debug)]
@@ -127,8 +128,10 @@ pub struct Linewright {
     /// Absent from the answers of a `serve` that does not count them.
     #[serde(default)]
     pub failed_polls: Option<FailedPolls>,
-    /// Set only while a usage limit is in force.
-    pub usage_limit_resets_at: Option<Timestamp>,
+    /// Set only while a usage limit is in force. Absent from the answers of
+    /// a `serve` of 0.27.0 or before, which read as none in force.
+    #[serde(default)]
+    pub usage_limit: Option<UsageLimitHeld>,
     /// The files of the repository's Linewright cannot use, by path.
     /// Absent from the answers of a `serve` that does not read them.
     #[serde(default)]
@@ -391,10 +394,7 @@ pub fn status(sources: StatusSources<'_>) -> Status {
             (None, None) => None,
         },
         failed_polls: polling.and_then(|polling| polling.failed.clone()),
-        usage_limit_resets_at: view
-            .and_then(|v| v.memory.usage_limit)
-            .map(|limit| limit.resets_at)
-            .filter(|resets_at| now < *resets_at),
+        usage_limit: view.and_then(|v| v.memory.usage_limit),
         unusable_files: view.map_or_else(Vec::new, unusable_files),
         drain: view
             .and_then(|v| v.memory.drain)
@@ -578,7 +578,7 @@ pub enum LinewrightFact<'a> {
     Polls(Option<PollsShown>),
     FailedPolls(&'a FailedPolls),
     UsageLimit {
-        resets_at: Timestamp,
+        resets_at: Option<Timestamp>,
     },
     UnusableFile(&'a FileError),
     Drain(DrainShown),
@@ -601,8 +601,8 @@ impl Linewright {
             Some(LinewrightFact::ServingSince(self.serving_since)),
             Some(LinewrightFact::Polls(self.polls)),
             self.failed_polls.as_ref().map(LinewrightFact::FailedPolls),
-            self.usage_limit_resets_at
-                .map(|resets_at| LinewrightFact::UsageLimit { resets_at }),
+            self.usage_limit
+                .map(|UsageLimitHeld { resets_at }| LinewrightFact::UsageLimit { resets_at }),
         ]
         .into_iter()
         .chain(
@@ -694,8 +694,12 @@ pub fn polls_failed_since(failed: &FailedPolls) -> Phrase {
     }
 }
 
-pub fn usage_limit(resets_at: Timestamp) -> Phrase {
-    Phrase::from("usage limit: in force until ").time(resets_at)
+/// The usage limit's hold, until `resets_at` where a reset time is known.
+pub fn usage_limit(resets_at: Option<Timestamp>) -> Phrase {
+    match resets_at {
+        Some(resets_at) => Phrase::from("usage limit: in force until ").time(resets_at),
+        None => "usage limit: in force".into(),
+    }
 }
 
 /// A file of the repository's Linewright cannot use, and its error.
@@ -818,7 +822,10 @@ pub fn describe_wait(wait: &Wait) -> Phrase {
             in_flight,
             max_runs,
         } => format!("a free run: {in_flight} of {max_runs} in flight").into(),
-        Wait::UsageLimit { resets_at } => Phrase::from("the usage limit, until ").time(*resets_at),
+        Wait::UsageLimit {
+            resets_at: Some(resets_at),
+        } => Phrase::from("the usage limit, until ").time(*resets_at),
+        Wait::UsageLimit { resets_at: None } => "the usage limit".into(),
         Wait::Drain => Phrase::from("the drain, until ")
             .code("serve")
             .text(" restarts"),

@@ -828,7 +828,7 @@ async fn a_card_paused_for_the_usage_limit_shows_its_column_line_tone_and_icons(
     assert_eq!(
         cards_shown(&html),
         [(
-            "Working: Do the thing #1 | paused until the usage limit resets".to_string(),
+            "Working: Do the thing #1 | paused until no session waits for it".to_string(),
             Kind::Issue
         )]
     );

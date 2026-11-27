@@ -44,8 +44,9 @@ pub struct Request<'a> {
     pub dir: &'a Path,
     /// The whole environment the command runs in.
     pub environment: Vec<(OsString, OsString)>,
-    /// The command still running then is ended, as [`Status::TimedOut`].
-    pub deadline: Instant,
+    /// Once this ends, the command, if still running, is ended, as
+    /// [`Status::TimedOut`].
+    pub deadline: std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
     /// The file its output is appended to, created if missing.
     pub log: &'a Path,
 }
@@ -111,6 +112,7 @@ pub async fn run(
         log: &mut log,
     };
     let mut cancelled = std::pin::pin!(cancelled);
+    let mut deadline = request.deadline;
     let mut buffer = vec![0; 8192];
     let mut open = true;
     let status = loop {
@@ -120,7 +122,7 @@ pub async fn run(
                 end_at_once(group, &mut child).await;
                 break Status::Cancelled;
             }
-            () = tokio::time::sleep_until(request.deadline) => {
+            () = &mut deadline => {
                 end_at_once(group, &mut child).await;
                 break Status::TimedOut;
             }
@@ -341,7 +343,7 @@ mod tests {
             command: &format!("echo 'token {secret}'; exit 1"),
             dir: dir.path(),
             environment: vec![],
-            deadline: Instant::now() + Duration::from_secs(30),
+            deadline: Box::pin(tokio::time::sleep(Duration::from_secs(30))),
             log: &log,
         };
 

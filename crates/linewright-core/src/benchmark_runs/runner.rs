@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::{Id, JoinError, JoinSet};
 use tracing::{error, info, warn};
 
@@ -19,12 +18,13 @@ use crate::benchmarks::{
 };
 use crate::clock::Clock;
 use crate::factory::FactoryConfig;
-use crate::harness::{Harness, UsageLimit};
+use crate::harness::Harness;
 use crate::runs::{Ending, OutcomeName};
 use crate::session::Cancellation;
 use crate::task::Task;
 use crate::trial::scorer::{self, ScoreRefusal, ScoreableTrial, ScorerRecord, Unscored};
 use crate::trial::{self, Configuration, Output, Spent, Under, Unrun};
+use crate::usage_limit::UsageLimitWaits;
 
 /// How the benchmark runs stand, as `serve` shows them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -55,7 +55,7 @@ struct StepContext {
     clock: Arc<dyn Clock>,
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
-    refusals: UnboundedSender<UsageLimit>,
+    usage_limit: UsageLimitWaits,
 }
 
 /// The trials and scorers of benchmark runs in flight, at most `max-trials`.
@@ -80,8 +80,8 @@ pub struct BenchmarkRunsRunner {
 
 impl BenchmarkRunsRunner {
     /// Runs the steps of `benchmark_runs` with `harness` and `config`, a
-    /// trial's, at most `max_trials` at once, their sessions waiting out
-    /// the usage limit and reporting it to `refusals`, and records when
+    /// trial's, at most `max_trials` at once, their sessions' waits for the
+    /// usage limit holding runs in `usage_limit`, and records when
     /// each change happens by `clock`.
     pub fn new(
         benchmark_runs: BenchmarkRuns,
@@ -89,7 +89,7 @@ impl BenchmarkRunsRunner {
         harness: Arc<dyn Harness>,
         config: FactoryConfig,
         max_trials: usize,
-        refusals: UnboundedSender<UsageLimit>,
+        usage_limit: UsageLimitWaits,
     ) -> BenchmarkRunsRunner {
         BenchmarkRunsRunner {
             context: StepContext {
@@ -97,7 +97,7 @@ impl BenchmarkRunsRunner {
                 clock,
                 harness,
                 config,
-                refusals,
+                usage_limit,
             },
             max_trials,
             steps: JoinSet::new(),
@@ -207,7 +207,7 @@ impl BenchmarkRunsRunner {
         let context = self.context.clone();
         let under = Under {
             cancel: cancel.clone(),
-            report_refusal: context.refusals.clone(),
+            usage_limit: context.usage_limit.clone(),
         };
         info!(benchmark_run = %trial.benchmark_run, task = %at.task, configuration = %at.configuration, repetition = trial.key.repetition, ?step, "a step of a benchmark run starts");
         let task = self.steps.spawn(async move {

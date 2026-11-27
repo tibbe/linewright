@@ -30,6 +30,7 @@ use linewright_core::phrase::{Phrase, Status};
 use linewright_core::repo_files::FileError;
 use linewright_core::runs::{OutcomeName, RunId};
 use linewright_core::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
+use linewright_core::usage_limit::UsageLimitHeld;
 
 /// The screen of the navigation that an area starts from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -423,7 +424,7 @@ impl Account {
 /// (`docs/specs/shell.md`, Notices).
 pub(super) enum Hold {
     UsageLimit {
-        resets_at: Timestamp,
+        resets_at: Option<Timestamp>,
     },
     Drain(DrainShown),
     /// A webhook delivery refused, with none accepted since.
@@ -453,8 +454,8 @@ impl Hold {
     ) -> Vec<Hold> {
         let failed_polls = linewright.failed_polls.clone().map(Hold::PollsFailed);
         let usage_limit = linewright
-            .usage_limit_resets_at
-            .map(|resets_at| Hold::UsageLimit { resets_at });
+            .usage_limit
+            .map(|UsageLimitHeld { resets_at }| Hold::UsageLimit { resets_at });
         let drain = linewright.drain.map(Hold::Drain);
         let refused = linewright
             .webhooks
@@ -749,7 +750,7 @@ mod tests {
             serving_since: at("2026-10-01T12:00:00Z"),
             polls: None,
             failed_polls: None,
-            usage_limit_resets_at: None,
+            usage_limit: None,
             unusable_files: vec![],
             drain: None,
             environment: Some(environment),

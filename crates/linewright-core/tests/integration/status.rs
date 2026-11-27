@@ -16,6 +16,7 @@ use linewright_core::testing::{
     at, closed_by, draining_since, implementing, in_flight, labeled_by_linewright, limited_until,
     sub_issue, ticket,
 };
+use linewright_core::usage_limit::UsageLimitHeld;
 use linewright_core::webhook::Received;
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
@@ -457,25 +458,21 @@ fn while_draining_an_item_waits_for_the_drain() {
 }
 
 #[test_log::test]
-fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
+fn a_usage_limit_in_force_with_no_reset_time_is_shown_without_one() {
     let view = View {
-        memory: limited_until("2026-10-01T12:00:10Z"),
+        memory: Memory {
+            usage_limit: Some(UsageLimitHeld { resets_at: None }),
+            ..Memory::default()
+        },
         ..view(vec![])
     };
 
-    let answer = status(StatusSources {
-        serving: &serving(),
-        webhooks: None,
-        polling: None,
-        view: Some(&view),
-        recorded: &[],
-        environment: None,
-        trials: TrialsInFlight::default(),
-        drain_deadline: None,
-        now: at("2026-10-01T12:00:30Z"),
-    });
+    let lines = text(Some(&view), "2026-10-01T12:00:30Z");
 
-    assert_eq!(answer.linewright.usage_limit_resets_at, None);
+    assert_eq!(
+        lines[3..],
+        ["usage limit: in force", "runs in flight: 0 of 4"]
+    );
 }
 
 #[test_log::test]
@@ -1093,7 +1090,7 @@ fn the_json_names_each_fact() {
                     "next": "2026-10-01T12:01:00Z",
                 },
                 "failed_polls": null,
-                "usage_limit_resets_at": null,
+                "usage_limit": null,
                 "unusable_files": [],
                 "drain": null,
                 "environment": null,
