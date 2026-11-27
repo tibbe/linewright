@@ -236,7 +236,7 @@ _Avoid_: tracked, watched, monitored, in the pool
 **Usage limit**:
 The cap a subscription puts on how much its agents may run in a window, such
 as five hours or a week, beyond which the harness refuses sessions until
-a stated reset time.
+the limit lifts.
 _Avoid_: rate limit, session limit, quota
 
 **Hold**:

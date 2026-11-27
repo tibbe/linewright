@@ -288,7 +288,7 @@ ends.
 | Hold            | In force                                                                      | Holds                       | Ends when                |
 | --------------- | ----------------------------------------------------------------------------- | --------------------------- | ------------------------ |
 | a drain         | `serve` is draining or stopping ([Stopping](operation.md#stopping))           | every run                   | `serve` restarts         |
-| the usage limit | the harness has refused a session for it, saying when it resets ([Usage limit](#usage-limit)) | every run | the usage limit resets   |
+| the usage limit | a session waits for it ([Usage limit](#usage-limit))                          | every run                   | no session waits for it  |
 | the environment | there is a setup command and no environment ([Building](sessions.md#building)) | every run                  | the environment is built |
 | a file          | a file of the repository's cannot be used ([Linewright's files](repository.md#linewrights-files)) | the runs that could read it | the default branch fixes the file |
 
@@ -302,16 +302,28 @@ ends.
 
 ## Usage limit
 
-When the harness refuses a session for the usage limit and says when the
-limit resets, the usage limit holds runs until then ([Holds](#holds)).
+A session reaches the usage limit when the harness refuses one of its
+requests for it. The session then waits for the limit to lift
+([Holds](#holds)). If the harness can check whether the limit has lifted, the
+session carries on within one minute of the lift. If the harness can't check,
+the session carries on at the reset time that the harness stated.
 
-- **The refused session.** A session refused for the usage limit has not
-  failed. It waits in its clone and, once the limit resets, resumes as the
-  same session with the time it had left, however long the wait.
-- **Resuming.** The resumed session is sent `follow-ups/usage-limit-reset.md`.
+- **Waiting.** A session that reaches the usage limit has not failed. It
+  waits in its turn and, once the limit lifts, carries on.
+- **The session timeout.** A session's waits for the usage limit do not count
+  toward its `session-timeout` ([Limits](#limits)).
+- **The reset time.** The reset time that Linewright shows is the last one
+  that the harness stated. If the limit has not lifted at that time, the
+  harness can state a later one.
+- **A turn the harness ends.** If the harness ends a turn for the usage limit
+  and states a reset time, the session waits in its clone until that time. It
+  then resumes as the same session and is sent
+  `follow-ups/usage-limit-reset.md`.
 - **A reset time already passed.** It is waited out for a short time.
-- **No reset time.** A refusal that does not say when the limit resets is an
-  infrastructure failure.
+- **No reset time.** A session that waits in its turn with no reset time
+  waits as long as the harness does, and Linewright shows no reset time for
+  it. A turn that the harness ends for the usage limit with no reset time is
+  an infrastructure failure.
 - **Restarts.** A restart forgets the limit.
 
 ## Transcripts
@@ -335,11 +347,18 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - **A turn's length.** Each turn ends with an entry saying "worked for" and
   how long the turn took, from its prompt to its last entry.
 - **Cut short.** A turn can end before its "thought" entry ends, such as
-  when the session ends or the harness refuses the turn for the usage limit.
+  when the session ends or the harness ends the turn for the usage limit.
   The entry then shows `interrupted` and how long it went on until the turn
   ended. A "worked for" entry whose session ends first shows the same. Where
   Linewright does not know when the turn or session ended, the entry shows
   no time.
+- **Waits for the usage limit.** Each wait for the usage limit that has ended
+  is an entry: "waited for the usage limit", with how long it lasted
+  ([Usage limit](#usage-limit)). It comes before the entry of the step that
+  waited, such as a "thought" entry, or, after a turn that the harness ended,
+  before the follow-up. Each other time that Linewright shows for a
+  session, a turn or an entry leaves out the session's waits for the usage
+  limit.
 - **The clone.** Linewright makes a clone for each session
   ([Stages](#stages)). This is an entry: a line with how long it took, then
   the error if it failed.
@@ -499,7 +518,7 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 ## Out of scope
 
 - Resuming, after a restart, a session that was waiting out the usage limit.
-- Slowing down as the usage limit approaches, before a session is refused.
+- Slowing down as the usage limit approaches, before a session reaches it.
 - Telling the agent that its session's maintenance command failed.
 - A teardown command, run as a clone is removed to release what lives outside
   it, such as a container its maintenance command started.

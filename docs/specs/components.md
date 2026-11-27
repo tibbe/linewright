@@ -322,9 +322,8 @@ session's heading.
 - **A session's heading** is in `font-semibold`. It has `mt-4` above it, but
   for the first session's. It holds the session's number and when it started,
   such as "session 1: started 5 minutes ago", then, at its right, how long it
-  has run. This time does not include a wait for the usage limit to reset.
-  Where Linewright does not know when the session ended, such as when a
-  restart interrupted its run, the time goes up to its last entry.
+  has run. Where Linewright does not know when the session ended, such as
+  when a restart interrupted its run, the time goes up to its last entry.
 - **A session's settings** are under its heading, in `text-sm`, in
   `secondary-text`: the session's model and effort, which open on click to where
   its settings and brief files came from.
@@ -368,8 +367,9 @@ How it works:
 - **Working.** While a followed session's turn goes on and no entry runs, the
   session's last line says "working" and how long the turn has gone on. The
   time goes up as the turn goes on. Between turns, there is no such line. While
-  the session waits for the usage limit to reset, the line says so and until
-  when instead, such as "waiting for the usage limit, until 14:30".
+  the session waits for the usage limit, in its turn or between turns, the
+  line says so and until when instead, such as "waiting for the usage limit,
+  until 14:30". With no reset time, it says "waiting for the usage limit".
 - **Folding.** An entry opens on click to what its line leaves out. For a tool
   call, that is its full input and result, and its sub-agent's work. For the
   clone, it is its error, and for the maintenance command, its output. For the
