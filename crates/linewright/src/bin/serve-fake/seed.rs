@@ -18,7 +18,7 @@ use linewright_core::benchmarks::{
 use linewright_core::cost::Usd;
 use linewright_core::database::Database;
 use linewright_core::domain::{Login, MergeMethods, Number, Timestamp, label};
-use linewright_core::fake_claude::scenario::{Scenario, Step};
+use linewright_core::fake_claude::scenario::{Lift, Scenario, Step};
 use linewright_core::input::{self, Wanted};
 use linewright_core::name::Name;
 use linewright_core::results::Verdict;
@@ -41,6 +41,17 @@ const BRISK_MILLIS: u64 = 1000;
 
 /// How long it takes over each step of an implement session.
 const STEADY_MILLIS: u64 = 3000;
+
+/// How long the implement session waits for the usage limit in its turn.
+const IN_TURN_WAIT_MILLIS: u64 = 40_000;
+
+/// How often the harness retries in that wait: more often than Claude
+/// Code's 30 s, so that the wait shows retries in its 40 s.
+const IN_TURN_RETRY_EVERY_MILLIS: u64 = 10_000;
+
+/// When the usage limit of that wait resets, from the seed's start: after
+/// the wait, as the limit lifts early.
+const IN_TURN_RESET_AFTER: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
 
 /// The repository's settings: a setup command.
 const SETTINGS: &str = "[setup]\ncommand = \"echo ready\"\n";
@@ -1017,7 +1028,8 @@ fn designing() -> Vec<Step> {
     steps
 }
 
-/// The implement session: its events, [`STEADY_MILLIS`] apart, and then a
+/// The implement session: its events, [`STEADY_MILLIS`] apart, with a wait
+/// for the usage limit in its turn after it has read the code, and then a
 /// hold, so that its run stays in flight until serve-fake stops or the
 /// session times out.
 fn implementing() -> Vec<Step> {
@@ -1063,7 +1075,13 @@ fn implementing() -> Vec<Step> {
             ),
         ]
     });
-    let mut steps = session(STEADY_MILLIS, reading.into_iter().chain(testing).collect());
+    let mut steps = session(STEADY_MILLIS, reading.into());
+    steps.push(Step::WaitForUsageLimit {
+        resets_at: Some(started_at() + IN_TURN_RESET_AFTER),
+        lifts: Lift::AfterMillis(IN_TURN_WAIT_MILLIS),
+        retry_every_millis: IN_TURN_RETRY_EVERY_MILLIS,
+    });
+    steps.extend(paced(STEADY_MILLIS, testing.collect()));
     steps.push(Step::Hold);
     steps
 }
@@ -1096,11 +1114,15 @@ fn session(pace_millis: u64, work: Vec<Value>) -> Vec<Step> {
     let mut steps = vec![Step::Stream(vec![json!({
         "type": "system", "subtype": "init", "model": "claude-opus-5-5",
     })])];
-    for event in work {
-        steps.push(Step::Sleep(pace_millis));
-        steps.push(Step::Stream(vec![event]));
-    }
+    steps.extend(paced(pace_millis, work));
     steps
+}
+
+/// Each of `work`'s events, `pace_millis` apart.
+fn paced(pace_millis: u64, work: Vec<Value>) -> Vec<Step> {
+    work.into_iter()
+        .flat_map(|event| [Step::Sleep(pace_millis), Step::Stream(vec![event])])
+        .collect()
 }
 
 /// The session's end, answering with `result`.
