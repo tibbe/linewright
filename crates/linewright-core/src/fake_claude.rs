@@ -11,7 +11,9 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use scenario::{STAGE_VARIABLE, Scenario, Step};
+use scenario::{Lift, STAGE_VARIABLE, Scenario, Step};
+
+use crate::domain::Timestamp;
 
 /// The first argument the fake starts itself again with, to stand in for a
 /// process left in a session of its own; the second names the file it
@@ -142,6 +144,16 @@ fn carry_out(
                 .spawn()?;
         }
         Step::Sleep(millis) => std::thread::sleep(Duration::from_millis(millis)),
+        Step::WaitForUsageLimit {
+            resets_at,
+            lifts,
+            retry_every_millis,
+        } => wait_for_usage_limit(
+            resets_at,
+            &lifts,
+            Duration::from_millis(retry_every_millis),
+            stamped_ahead_millis,
+        )?,
         Step::Commit {
             path,
             contents,
@@ -154,6 +166,53 @@ fn carry_out(
         Step::Exit(status) => return Ok(Some(status)),
     }
     Ok(None)
+}
+
+/// Waits for the usage limit as [`Step::WaitForUsageLimit`] says, counting
+/// down to the reset on the clock `stamped_ahead_millis` names, as
+/// [`Scenario::stamped_ahead_millis`] says.
+fn wait_for_usage_limit(
+    resets_at: Option<Timestamp>,
+    lifts: &Lift,
+    retry_every: Duration,
+    stamped_ahead_millis: Option<i64>,
+) -> anyhow::Result<()> {
+    let refused = std::time::Instant::now();
+    let lifted = || match lifts {
+        Lift::AfterMillis(millis) => refused.elapsed() >= Duration::from_millis(*millis),
+        Lift::Once(path) => path.exists(),
+    };
+    say(&serde_json::json!({
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "rejected",
+            "resetsAt": resets_at.map(|at| at.timestamp()),
+            "rateLimitType": "five_hour",
+        },
+    })
+    .to_string())?;
+    let mut next_retry = refused;
+    let mut attempt = 1;
+    while !lifted() {
+        if std::time::Instant::now() >= next_retry {
+            let now = chrono::Utc::now()
+                + chrono::TimeDelta::milliseconds(stamped_ahead_millis.unwrap_or(0));
+            let delay = resets_at.map_or(retry_every, |at| (at - now).to_std().unwrap_or_default());
+            say(&serde_json::json!({
+                "type": "system",
+                "subtype": "api_retry",
+                "attempt": attempt,
+                "retry_delay_ms": u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                "error_status": 429,
+                "error": "rate_limit",
+            })
+            .to_string())?;
+            attempt += 1;
+            next_retry += retry_every;
+        }
+        std::thread::sleep(POLL);
+    }
+    Ok(())
 }
 
 /// Writes `contents` to `path` and commits it, as [`Step::Commit`] says.
