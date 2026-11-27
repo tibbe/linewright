@@ -404,3 +404,21 @@ async fn a_wait_for_the_usage_limit_is_in_its_sessions_transcript_from_its_start
     assert!(at(ours[0]) < usage_limit_resets_at(), "{ours:#?}");
     assert!(at(ours[1]) >= usage_limit_resets_at(), "{ours:#?}");
 }
+
+/// `docs/specs/runs.md`, Holds, and Usage limit, Waiting and No reset time.
+#[test_log::test(tokio::test)]
+async fn a_session_waiting_in_its_turn_holds_runs_until_it_carries_on_with_no_follow_up() {
+    let world = World::new().await;
+    implement(&world);
+    let limit = world.harness.waits_in_turn(world.clock.now(), None);
+    open_ticket(&world, "Do the thing");
+    let served = Served::start(world).await;
+
+    eventually(|| served.usage_limit() == Some(UsageLimitHeld { resets_at: None })).await;
+    limit.lifts(served.world.clock.now());
+
+    eventually(|| served.usage_limit().is_none()).await;
+    eventually(|| served.world.store.pulls().len() == 1).await;
+    assert_eq!(served.world.harness.prompts(WorkKind::Implement).len(), 1);
+    served.stop().await;
+}

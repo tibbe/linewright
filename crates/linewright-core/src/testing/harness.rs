@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 use crate::cost::TurnSpend;
 use crate::domain::Timestamp;
-pub use crate::fake_claude::scenario::{Scenario, Step};
+pub use crate::fake_claude::scenario::{Lift, Scenario, Step};
 
 /// The variables of the scripted harness's program, in the namespaces the
 /// table of sessions' variables passes.
@@ -63,6 +63,26 @@ pub struct ScriptedHarness {
     model: Mutex<Option<String>>,
     /// What each turn reports it spent, as it ends.
     spend: Mutex<Option<TurnSpend>>,
+    /// The wait for the usage limit the next turn begins with, if any.
+    wait: Mutex<Option<ScriptedWait>>,
+}
+
+/// A wait for the usage limit a turn begins with.
+struct ScriptedWait {
+    at: Timestamp,
+    stated: Option<Timestamp>,
+    lifted: tokio::sync::oneshot::Receiver<Timestamp>,
+}
+
+/// The usage limit a turn waits for in its turn: the wait ends, and the turn
+/// carries on, once it lifts.
+pub struct InTurnLimit(tokio::sync::oneshot::Sender<Timestamp>);
+
+impl InTurnLimit {
+    /// Lifts the limit `at`.
+    pub fn lifts(self, at: Timestamp) {
+        let _ = self.0.send(at);
+    }
 }
 
 /// The agent of a turn held open: it writes output each time it is told
@@ -129,6 +149,15 @@ impl ScriptedHarness {
         HeldTurn(says)
     }
 
+    /// Has the next turn wait for the usage limit in its turn from `at`, as
+    /// a harness does that can wait, the reset time `stated` if any, until
+    /// the limit returned lifts. The turn then carries on.
+    pub fn waits_in_turn(&self, at: Timestamp, stated: Option<Timestamp>) -> InTurnLimit {
+        let (lifts, lifted) = tokio::sync::oneshot::channel();
+        *self.wait.lock().unwrap() = Some(ScriptedWait { at, stated, lifted });
+        InTurnLimit(lifts)
+    }
+
     pub fn prompts(&self, kind: WorkKind) -> Vec<String> {
         self.prompts_for(ScriptKey::Work(kind))
     }
@@ -192,16 +221,18 @@ impl ScriptedHarness {
         if !time.is_zero() {
             tokio::time::sleep(time).await;
         }
+        let wait = self.wait.lock().unwrap().take();
+        if let Some(wait) = wait {
+            let (waiting, line) = spec.waits.begin(wait.at, wait.stated);
+            append_output(spec, &format!("{line}\n"));
+            if let Ok(at) = wait.lifted.await {
+                append_output(spec, &format!("{}\n", waiting.end(at)));
+            }
+        }
         let held = self.held.lock().unwrap().take();
         if let Some(mut said) = held {
             while let Some(output) = said.recv().await {
-                let path = spec.record.join(crate::transcript::OUTPUT);
-                let mut file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .unwrap();
-                std::io::Write::write_all(&mut file, output.as_bytes()).unwrap();
+                append_output(spec, &output);
             }
         }
         let key = ScriptKey::of(spec);
@@ -243,6 +274,17 @@ impl ScriptedHarness {
             log_tail: String::new(),
         })
     }
+}
+
+/// Appends `output` to the output of `spec`'s session.
+fn append_output(spec: &SessionSpec, output: &str) {
+    let path = spec.record.join(crate::transcript::OUTPUT);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    std::io::Write::write_all(&mut file, output.as_bytes()).unwrap();
 }
 
 /// The environment a fake harness's session starts from: `given`, then

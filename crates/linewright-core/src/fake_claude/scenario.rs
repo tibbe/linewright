@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::domain::Timestamp;
+
 /// The variable that names the stage a session is in, for the fake to take
 /// that stage's steps from [`Scenario::stages`].
 pub const STAGE_VARIABLE: &str = "FAKE_CLAUDE_STAGE";
@@ -73,6 +75,18 @@ pub enum Step {
     LeaveHoldingOutput,
     /// Sleeps this many milliseconds.
     Sleep(u64),
+    /// Waits for the usage limit in its turn, as a prototype of Claude Code
+    /// 2.1.323 with its retry watchdog was seen to (#1765): streams a
+    /// `rate_limit_event` that says the limit refused the request, and resets
+    /// at `resets_at` or at a time not stated, then a `system/api_retry`
+    /// every `retry_every_millis`, its `retry_delay_ms` counting down to the
+    /// reset, until the limit `lifts`. The steps after it are the reply.
+    WaitForUsageLimit {
+        resets_at: Option<Timestamp>,
+        lifts: Lift,
+        #[serde(default = "watchdog_retry_every_millis")]
+        retry_every_millis: u64,
+    },
     /// Writes `contents` to `path`, relative to the directory the fake runs
     /// in, and commits it there with `message`.
     Commit {
@@ -86,4 +100,19 @@ pub enum Step {
     Hold,
     /// Exits with the status.
     Exit(i32),
+}
+
+/// When the usage limit a [`Step::WaitForUsageLimit`] waits for lifts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Lift {
+    /// This many milliseconds after the refusal.
+    AfterMillis(u64),
+    /// Once the path exists.
+    Once(PathBuf),
+}
+
+/// How often Claude Code's retry watchdog retries a request the usage limit
+/// refused.
+fn watchdog_retry_every_millis() -> u64 {
+    30_000
 }
