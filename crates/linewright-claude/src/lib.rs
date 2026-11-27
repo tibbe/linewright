@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use linewright_core::child;
+use linewright_core::clock::Clock;
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright_core::domain::Timestamp;
 use linewright_core::harness::{
@@ -16,6 +17,7 @@ use linewright_core::redaction::Redaction;
 use linewright_core::session_env::{GH_CONFIG_DIR, Given, TEMPORARY_DIRECTORY};
 use linewright_core::store::TOKEN_VARIABLES;
 use linewright_core::transcript::{self, StartedBy};
+use linewright_core::usage_limit::{Waiting, Waits};
 use linewright_core::work_settings::{Effort, Model};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -38,6 +40,19 @@ const NO_UPDATES: &str = "DISABLE_UPDATES";
 /// `startup_failure_reason`, where most would otherwise be told on standard
 /// error alone: <https://code.claude.com/docs/en/env-vars>.
 const STARTUP_FAILURE_RESULTS: &str = "CLAUDE_CODE_STARTUP_FAILURE_RESULTS";
+/// Has a request the usage limit refuses wait in its turn, until the reset
+/// or a recheck finds the limit lifted, where it would otherwise end the
+/// turn: <https://code.claude.com/docs/en/env-vars>,
+/// <https://code.claude.com/docs/en/errors>.
+const RETRY_WATCHDOG: &str = "CLAUDE_CODE_RETRY_WATCHDOG";
+/// How often the retry watchdog rechecks whether the usage limit has lifted,
+/// for a claude.ai subscription, so that a session carries on soon after a
+/// lift (`docs/specs/runs.md`, Usage limit):
+/// <https://code.claude.com/docs/en/env-vars>.
+const USAGE_LIMIT_RECHECK: &str = "CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS";
+/// Every minute, the floor the retry watchdog takes, as a prototype of
+/// Claude Code 2.1.323 found (#1765).
+const USAGE_LIMIT_RECHECK_MILLIS: &str = "60000";
 /// The variables Claude Code reads a credential from, of those in the
 /// namespaces the table of sessions' variables passes. Docs:
 /// <https://code.claude.com/docs/en/env-vars>.
@@ -66,12 +81,14 @@ enum Own {
     GhToken,
     GithubToken,
     StartupFailureResults,
+    RetryWatchdog,
+    UsageLimitRecheck,
     GhConfigDir,
 }
 
 impl Own {
     /// Those `session-env` may not set.
-    const NOT_SET_BY_OPERATOR: [Own; 7] = [
+    const NOT_SET_BY_OPERATOR: [Own; 9] = [
         Own::TemporaryDirectory,
         Own::Shell,
         Own::NoUpdates,
@@ -79,6 +96,8 @@ impl Own {
         Own::GhToken,
         Own::GithubToken,
         Own::StartupFailureResults,
+        Own::RetryWatchdog,
+        Own::UsageLimitRecheck,
     ];
 
     const ALL: [Own; Own::NOT_SET_BY_OPERATOR.len() + 1] = {
@@ -100,13 +119,22 @@ impl Own {
             Own::GhToken => TOKEN_VARIABLES[0],
             Own::GithubToken => TOKEN_VARIABLES[1],
             Own::StartupFailureResults => STARTUP_FAILURE_RESULTS,
+            Own::RetryWatchdog => RETRY_WATCHDOG,
+            Own::UsageLimitRecheck => USAGE_LIMIT_RECHECK,
             Own::GhConfigDir => GH_CONFIG_DIR,
         }
     }
 }
 
 /// Claude Code's settings that Linewright sets for a session itself.
-const SETTINGS: [&str; 4] = [SHELL, NO_UPDATES, EFFORT, STARTUP_FAILURE_RESULTS];
+const SETTINGS: [&str; 6] = [
+    SHELL,
+    NO_UPDATES,
+    EFFORT,
+    STARTUP_FAILURE_RESULTS,
+    RETRY_WATCHDOG,
+    USAGE_LIMIT_RECHECK,
+];
 
 /// Claude Code's program.
 pub const PROGRAM: Program = Program {
@@ -135,7 +163,10 @@ fn set_for_session<'a>(
             let value = match own {
                 Own::TemporaryDirectory => Some(scratch.as_os_str()),
                 Own::Shell => Some(bash.as_os_str()),
-                Own::NoUpdates | Own::StartupFailureResults => Some(OsStr::new("1")),
+                Own::NoUpdates | Own::StartupFailureResults | Own::RetryWatchdog => {
+                    Some(OsStr::new("1"))
+                }
+                Own::UsageLimitRecheck => Some(OsStr::new(USAGE_LIMIT_RECHECK_MILLIS)),
                 Own::Effort => effort.map(|effort| OsStr::new(effort.name())),
                 Own::GhToken | Own::GithubToken => Some(OsStr::new(github_token)),
                 Own::GhConfigDir => gh_config.map(Path::as_os_str),
@@ -428,14 +459,153 @@ enum RateLimitStatus {
     Other,
 }
 
-impl RateLimitEvent {
-    fn refusal(&self) -> Option<UsageLimit> {
-        match self.rate_limit_info {
-            RateLimitInfo {
-                status: RateLimitStatus::Rejected,
-                resets_at: Some(resets_at),
-            } => Some(UsageLimit { resets_at }),
-            _ => None,
+/// What an event of a turn's stream is to a wait for the usage limit in the
+/// turn. Claude Code's retry watchdog streams a refusal, then a
+/// `system/api_retry` of the request every 30 s until the limit lifts, as
+/// a prototype of Claude Code 2.1.323 found (#1765):
+/// <https://code.claude.com/docs/en/errors>.
+#[derive(Debug, PartialEq)]
+enum WaitEvent {
+    /// A `rate_limit_event` saying that the usage limit refused a request,
+    /// and when it resets, if it says.
+    Refused(Option<Timestamp>),
+    /// A `system/api_retry` of a request the usage limit refused.
+    Retried,
+    /// The `assistant` message by which the harness ends the turn for the
+    /// usage limit instead of waiting.
+    EndsTheTurn,
+    /// Any other event: the turn goes on.
+    Other,
+}
+
+impl WaitEvent {
+    fn of(event: &serde_json::Value) -> WaitEvent {
+        match event["type"].as_str() {
+            Some("rate_limit_event") => match RateLimitEvent::deserialize(event) {
+                Ok(RateLimitEvent {
+                    rate_limit_info:
+                        RateLimitInfo {
+                            status: RateLimitStatus::Rejected,
+                            resets_at,
+                        },
+                }) => WaitEvent::Refused(resets_at),
+                _ => WaitEvent::Other,
+            },
+            Some("system") if event["subtype"] == "api_retry" && event["error"] == RATE_LIMIT => {
+                WaitEvent::Retried
+            }
+            Some("assistant") if event["error"] == RATE_LIMIT => WaitEvent::EndsTheTurn,
+            _ => WaitEvent::Other,
+        }
+    }
+}
+
+/// The `error` of an `api_retry` or an `assistant` message that the usage
+/// limit refused.
+const RATE_LIMIT: &str = "rate_limit";
+
+/// A turn's wait for the usage limit, as its stream tells it
+/// (`docs/specs/runs.md`, Usage limit, Waiting).
+#[derive(Default)]
+enum InTurnWait {
+    #[default]
+    NotWaiting,
+    /// Begun on a refusal `at`. Until the harness retries, it may yet end the
+    /// turn instead, and the transcript says nothing of the wait.
+    Refused { stated: Stated, at: Timestamp },
+    /// The harness retries, waiting in its turn.
+    Retrying(Stated),
+}
+
+/// A wait under way, and the reset time it stated last, if any.
+struct Stated {
+    waiting: Waiting,
+    until: Option<Timestamp>,
+}
+
+impl Stated {
+    /// States the reset time `stated`, if the harness stated one, giving the
+    /// line for the session's transcript.
+    fn restate(&mut self, stated: Option<Timestamp>, clock: &dyn Clock) -> Option<String> {
+        let stated = stated?;
+        self.until = Some(stated);
+        Some(self.waiting.restate(clock.now(), stated))
+    }
+}
+
+/// What an event did to a turn's wait.
+#[derive(Default)]
+struct Followed {
+    /// The line for the session's transcript, to come before the event's.
+    transcript_line: Option<String>,
+    /// Whether the turn went on past a refusal: the limit lifted, or did
+    /// not hold the turn.
+    went_on: bool,
+}
+
+impl InTurnWait {
+    /// Follows the wait through `event`: begins it on `waits` at a refusal,
+    /// restates it, or ends it, reading the time from `clock` only where it
+    /// is needed.
+    fn follow(&mut self, event: &WaitEvent, waits: &Waits, clock: &dyn Clock) -> Followed {
+        let (wait, followed) = match (std::mem::take(self), event) {
+            (InTurnWait::NotWaiting, WaitEvent::Refused(until)) => {
+                let at = clock.now();
+                let (waiting, _) = waits.begin(at, *until);
+                let stated = Stated {
+                    waiting,
+                    until: *until,
+                };
+                (InTurnWait::Refused { stated, at }, Followed::default())
+            }
+            (InTurnWait::NotWaiting, _) => (InTurnWait::NotWaiting, Followed::default()),
+            (InTurnWait::Refused { mut stated, at }, WaitEvent::Refused(until)) => {
+                stated.restate(*until, clock);
+                (InTurnWait::Refused { stated, at }, Followed::default())
+            }
+            (InTurnWait::Refused { stated, at }, WaitEvent::Retried) => {
+                let followed = Followed {
+                    transcript_line: Some(transcript::usage_limit_waiting(at, stated.until)),
+                    went_on: false,
+                };
+                (InTurnWait::Retrying(stated), followed)
+            }
+            (InTurnWait::Refused { .. }, WaitEvent::EndsTheTurn) => {
+                (InTurnWait::NotWaiting, Followed::default())
+            }
+            (InTurnWait::Refused { .. }, WaitEvent::Other) => {
+                let followed = Followed {
+                    transcript_line: None,
+                    went_on: true,
+                };
+                (InTurnWait::NotWaiting, followed)
+            }
+            (InTurnWait::Retrying(mut stated), WaitEvent::Refused(until)) => {
+                let followed = Followed {
+                    transcript_line: stated.restate(*until, clock),
+                    went_on: false,
+                };
+                (InTurnWait::Retrying(stated), followed)
+            }
+            (wait @ InTurnWait::Retrying(_), WaitEvent::Retried) => (wait, Followed::default()),
+            (InTurnWait::Retrying(stated), event) => {
+                let followed = Followed {
+                    transcript_line: Some(stated.waiting.end(clock.now())),
+                    went_on: *event != WaitEvent::EndsTheTurn,
+                };
+                (InTurnWait::NotWaiting, followed)
+            }
+        };
+        *self = wait;
+        followed
+    }
+
+    /// Ends the wait at the stream's end, giving the line for the session's
+    /// transcript, if any.
+    fn end(self, clock: &dyn Clock) -> Option<String> {
+        match self {
+            InTurnWait::Retrying(stated) => Some(stated.waiting.end(clock.now())),
+            InTurnWait::NotWaiting | InTurnWait::Refused { .. } => None,
         }
     }
 }
@@ -674,12 +844,28 @@ impl ClaudeCode {
             let mut refusal = None;
             let mut version = None;
             let mut last_message = None;
+            let mut wait = InTurnWait::NotWaiting;
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = self.0.redaction.apply(&line);
-                if let Some(file) = output.as_mut() {
-                    let _ = file.write_all(format!("{line}\n").as_bytes()).await;
+                let event = serde_json::from_str::<serde_json::Value>(&line).ok();
+                let followed = event.as_ref().map_or_else(Followed::default, |event| {
+                    let wait_event = WaitEvent::of(event);
+                    if let WaitEvent::Refused(Some(resets_at)) = wait_event {
+                        refusal = Some(UsageLimit { resets_at });
+                    }
+                    wait.follow(&wait_event, &spec.waits, &*self.0.clock)
+                });
+                if followed.went_on {
+                    refusal = None;
                 }
-                let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+                if let Some(file) = output.as_mut() {
+                    let written = match followed.transcript_line {
+                        Some(ours) => format!("{ours}\n{line}"),
+                        None => line,
+                    };
+                    let _ = file.write_all(format!("{written}\n").as_bytes()).await;
+                }
+                let Some(event) = event else {
                     continue;
                 };
                 match event["type"].as_str() {
@@ -696,10 +882,6 @@ impl ClaudeCode {
                         result = serde_json::from_value::<ResultEvent>(event).ok();
                         *spend.lock().expect("the spend's lock is not poisoned") =
                             turn_spend(version, result.as_ref());
-                    }
-                    Some("rate_limit_event") => {
-                        let event = serde_json::from_value::<RateLimitEvent>(event).ok();
-                        refusal = event.and_then(|e| e.refusal()).or(refusal);
                     }
                     Some("assistant") => {
                         if event["parent_tool_use_id"].is_null()
@@ -718,7 +900,11 @@ impl ClaudeCode {
                     _ => {}
                 }
             }
+            let waited = wait.end(&*self.0.clock);
             if let Some(file) = output.as_mut() {
+                if let Some(waited) = waited {
+                    let _ = file.write_all(format!("{waited}\n").as_bytes()).await;
+                }
                 let marker = transcript::turn_ended_marker(self.0.clock.now());
                 let _ = file.write_all(format!("{marker}\n").as_bytes()).await;
             }

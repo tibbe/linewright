@@ -5,17 +5,17 @@ use std::time::Duration;
 
 use linewright_claude::ClaudeCode;
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
-use linewright_core::domain::Number;
+use linewright_core::domain::{Number, Timestamp};
 use linewright_core::harness::{
-    GhReach, Harness, HarnessSettings, Purpose, Reported, Reporter, SessionError, SessionSpec,
+    GhReach, Harness, HarnessSettings, Purpose, Reported, Reporter, SessionError, SessionSpec, Turn,
 };
 use linewright_core::reconcile::{Subject, WorkKind};
 use linewright_core::redaction::Redaction;
 use linewright_core::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 use linewright_core::testing::*;
-use linewright_core::transcript::{Course, Prompt, What};
+use linewright_core::transcript::{self, Course, End, EntryAt, Prompt, Wait, WaitPlace, What};
 use linewright_core::trial::{Gate, Upstream};
-use linewright_core::usage_limit::UsageLimitWaits;
+use linewright_core::usage_limit::{UsageLimitHeld, UsageLimitWaits};
 use linewright_core::work_settings::Effort;
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -482,6 +482,8 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
             "CARGO_HOME",
             "CARGO_TARGET_DIR",
             "CLAUDE_CODE_EFFORT_LEVEL",
+            "CLAUDE_CODE_RETRY_WATCHDOG",
+            "CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS",
             "CLAUDE_CODE_SHELL",
             "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
             "CLAUDE_CONFIG_DIR",
@@ -647,6 +649,8 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
             ("GH_TOKEN", "linewright-token"),
             ("GITHUB_TOKEN", "linewright-token"),
             ("CLAUDE_CODE_STARTUP_FAILURE_RESULTS", "1"),
+            ("CLAUDE_CODE_RETRY_WATCHDOG", "1"),
+            ("CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS", "60000"),
         ]
     );
     let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
@@ -669,6 +673,8 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
         "GH_TOKEN=linewright-token".to_string(),
         "GITHUB_TOKEN=linewright-token".to_string(),
         "CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1".to_string(),
+        "CLAUDE_CODE_RETRY_WATCHDOG=1".to_string(),
+        "CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS=60000".to_string(),
     ];
     expected.sort_unstable();
     assert_eq!(spawned, expected);
@@ -999,6 +1005,7 @@ async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
     assert_eq!(limit.resets_at.to_rfc3339(), "2026-10-13T07:50:00+00:00");
     let started = flag_value(&turn_args(dir.path())[0], "--session-id").map(str::to_string);
     assert_eq!(Some(session), started);
+    assert_eq!(transcript_of(dir.path()).waits, []);
 }
 
 #[test_log::test(tokio::test)]
@@ -1655,4 +1662,344 @@ async fn a_process_a_session_left_holding_its_output_does_not_hold_the_turn() {
     let turn = harness.start(&triage_session(dir.path())).await.unwrap();
 
     assert_eq!(turn.message, "Done.");
+}
+
+/// A reset time a minute from now, as the harness states it, to the second.
+fn a_minute_from_now() -> Timestamp {
+    let now = chrono::Utc::now() + chrono::TimeDelta::minutes(1);
+    chrono::DateTime::from_timestamp(now.timestamp(), 0).unwrap()
+}
+
+/// A wait for the usage limit, the reset time `resets_at` if stated, that
+/// Claude Code's retry watchdog ends as the limit `lifts`, retrying every
+/// tenth of a second.
+fn waiting_for_the_usage_limit(resets_at: Option<Timestamp>, lifts: Lift) -> Step {
+    Step::WaitForUsageLimit {
+        resets_at,
+        lifts,
+        retry_every_millis: 100,
+    }
+}
+
+/// A limit that lifts `after` the refusal.
+fn after(after: Duration) -> Lift {
+    Lift::AfterMillis(after.as_millis().try_into().unwrap())
+}
+
+/// Starts `harness`'s turn of the session in `dir`, its waits being those of
+/// the hold returned.
+fn started_held(
+    harness: ClaudeCode,
+    dir: &Path,
+) -> (
+    tokio::sync::watch::Receiver<Option<UsageLimitHeld>>,
+    tokio::task::JoinHandle<Result<Turn, SessionError>>,
+) {
+    let waits = UsageLimitWaits::default();
+    let held = waits.held();
+    let mut session = triage_session(dir);
+    session.waits = waits.session(tokio::time::Instant::now(), Duration::from_hours(1));
+    let turn = tokio::spawn(async move { harness.start(&session).await });
+    (held, turn)
+}
+
+/// The one wait of `session`, which has ended.
+fn the_ended_wait(session: &transcript::Session) -> &Wait {
+    let [wait] = &session.waits[..] else {
+        panic!("expected one wait, got {:?}", session.waits);
+    };
+    assert!(matches!(wait.end, End::At(_)), "{wait:?}");
+    wait
+}
+
+/// A thought of the agent's, as a whole message.
+fn thinking(text: &str) -> Value {
+    json!({
+        "type": "assistant",
+        "message": {"content": [{"type": "thinking", "thinking": text, "signature": "s"}]},
+    })
+}
+
+/// The session in the record `dir`, as its transcript gives it.
+fn transcript_of(dir: &Path) -> transcript::Session {
+    let record = transcript::SessionRecord::read(dir).unwrap();
+    transcript::parse(&record, transcript::Written::Whole)
+}
+
+/// `docs/specs/runs.md`, Usage limit, Waiting.
+#[test_log::test(tokio::test)]
+async fn a_session_that_reaches_the_usage_limit_waits_in_its_turn_and_carries_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let resets_at = a_minute_from_now();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Log {
+                dir: dir.path().into(),
+            },
+            Step::Stream(vec![json!({"type": "system", "subtype": "init"})]),
+            waiting_for_the_usage_limit(Some(resets_at), after(Duration::from_millis(300))),
+            Step::Stream(vec![saying("Carried on."), done()]),
+        ],
+    );
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
+    assert_eq!(turn_args(dir.path()).len(), 1);
+    let session = transcript_of(dir.path());
+    assert_eq!(session.turns.len(), 1);
+    assert_eq!(the_ended_wait(&session).until, Some(resets_at));
+}
+
+/// `docs/specs/runs.md`, Holds.
+#[test_log::test(tokio::test)]
+async fn a_session_waiting_in_its_turn_holds_runs_while_it_waits_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let refuse = dir.path().join("refuse");
+    let lift = dir.path().join("lift");
+    let finish = dir.path().join("finish");
+    let resets_at = a_minute_from_now();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![saying("Reading.")]),
+            Step::WaitFor(refuse.clone()),
+            waiting_for_the_usage_limit(Some(resets_at), Lift::Once(lift.clone())),
+            Step::Stream(vec![saying("Carried on.")]),
+            Step::WaitFor(finish.clone()),
+            Step::Stream(vec![done()]),
+        ],
+    );
+    let (held, turn) = started_held(harness, dir.path());
+
+    until_said(dir.path(), "Reading.").await;
+    let before = *held.borrow();
+    std::fs::write(&refuse, "").unwrap();
+    eventually(|| held.borrow().is_some()).await;
+    let during = *held.borrow();
+    std::fs::write(&lift, "").unwrap();
+    until_said(dir.path(), "Carried on.").await;
+    let after = *held.borrow();
+    std::fs::write(&finish, "").unwrap();
+
+    assert_eq!(turn.await.unwrap().unwrap().message, "Done.");
+    assert_eq!(before, None);
+    assert_eq!(
+        during,
+        Some(UsageLimitHeld {
+            resets_at: Some(resets_at)
+        })
+    );
+    assert_eq!(after, None);
+}
+
+/// `docs/specs/runs.md`, Usage limit, The session timeout.
+#[test_log::test(tokio::test)]
+async fn a_wait_in_its_turn_does_not_count_toward_the_session_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            waiting_for_the_usage_limit(Some(a_minute_from_now()), after(Duration::from_secs(3))),
+            Step::Stream(vec![done()]),
+        ],
+    );
+    let mut session = triage_session(dir.path());
+    session.waits =
+        UsageLimitWaits::default().session(tokio::time::Instant::now(), Duration::from_secs(2));
+
+    let turn = harness.start(&session).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
+    let counted = session
+        .waits
+        .deadline()
+        .counted(tokio::time::Instant::now());
+    assert!(counted < Duration::from_secs(2), "{counted:?}");
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit.
+#[test_log::test(tokio::test)]
+async fn a_wait_in_its_turn_comes_before_the_thought_that_waited() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![saying("Reading.")]),
+            waiting_for_the_usage_limit(
+                Some(a_minute_from_now()),
+                after(Duration::from_millis(300)),
+            ),
+            Step::Stream(vec![thinking("Now the tests."), done()]),
+        ],
+    );
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    let session = transcript_of(dir.path());
+    let thought = session.turns[0]
+        .entries
+        .iter()
+        .position(|entry| matches!(entry.what, What::Thought(_)))
+        .unwrap();
+    let places: Vec<&WaitPlace> = session.waits.iter().map(|wait| &wait.place).collect();
+    assert_eq!(
+        places,
+        [&WaitPlace::Before(EntryAt {
+            turn: 0,
+            path: vec![thought]
+        })]
+    );
+}
+
+/// `docs/specs/runs.md`, Usage limit, No reset time.
+#[test_log::test(tokio::test)]
+async fn a_wait_in_its_turn_with_no_reset_time_lasts_as_long_as_the_harness_waits() {
+    let dir = tempfile::tempdir().unwrap();
+    let lift = dir.path().join("lift");
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            waiting_for_the_usage_limit(None, Lift::Once(lift.clone())),
+            Step::Stream(vec![done()]),
+        ],
+    );
+    let (held, turn) = started_held(harness, dir.path());
+
+    eventually(|| held.borrow().is_some()).await;
+    let during = *held.borrow();
+    std::fs::write(&lift, "").unwrap();
+
+    assert_eq!(turn.await.unwrap().unwrap().message, "Done.");
+    assert_eq!(during, Some(UsageLimitHeld { resets_at: None }));
+    assert_eq!(*held.borrow(), None);
+    assert_eq!(the_ended_wait(&transcript_of(dir.path())).until, None);
+}
+
+/// `docs/specs/runs.md`, Usage limit, Waiting: the limit lifted, so a later
+/// failure is not the usage limit.
+#[test_log::test(tokio::test)]
+async fn a_turn_that_carried_on_from_the_usage_limit_and_then_failed_is_not_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            waiting_for_the_usage_limit(
+                Some(a_minute_from_now()),
+                after(Duration::from_millis(300)),
+            ),
+            Step::Stream(vec![
+                saying("Carried on."),
+                json!({
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": true,
+                    "terminal_reason": "api_error",
+                    "api_error_status": 529,
+                    "result": "API Error: 529 Overloaded",
+                }),
+            ]),
+        ],
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(error, SessionError::Infrastructure(_)),
+        "{error:?}"
+    );
+}
+
+/// A `rate_limit_event` saying the usage limit refused the request and
+/// resets at `resets_at`.
+fn rejected_until(resets_at: Timestamp) -> Value {
+    json!({
+        "type": "rate_limit_event",
+        "rate_limit_info": {"status": "rejected", "resetsAt": resets_at.timestamp()},
+    })
+}
+
+/// The retry watchdog's retry of a request the usage limit refused.
+fn retried() -> Value {
+    json!({"type": "system", "subtype": "api_retry", "retry_delay_ms": 30_000, "error": "rate_limit"})
+}
+
+/// `docs/specs/runs.md`, Usage limit, The reset time.
+#[test_log::test(tokio::test)]
+async fn a_wait_in_its_turn_takes_the_reset_time_the_harness_stated_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let later = at("2026-10-13T12:50:00Z");
+    let harness = harness_streaming(
+        dir.path(),
+        &[
+            rejected_until(at("2026-10-13T07:50:00Z")),
+            retried(),
+            rejected_until(later),
+            retried(),
+            done(),
+        ],
+    );
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    let waits = transcript_of(dir.path()).waits;
+    let untils: Vec<Option<Timestamp>> = waits.iter().map(|wait| wait.until).collect();
+    assert_eq!(untils, [Some(later)]);
+}
+
+/// `docs/specs/runs.md`, Usage limit, A turn the harness ends.
+#[test_log::test(tokio::test)]
+async fn a_turn_the_harness_ends_after_waiting_in_it_is_refused_for_the_usage_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut events = vec![rejected_until(at("2026-10-13T07:50:00Z")), retried()];
+    events.extend(refused_for_the_usage_limit(&rejected()));
+    let harness = harness_streaming(dir.path(), &events);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::UsageLimit { limit, .. } = error else {
+        panic!("expected the usage limit, got {error:?}");
+    };
+    assert_eq!(limit.resets_at, at("2026-10-13T07:50:00Z"));
+    assert_eq!(transcript_of(dir.path()).waits.len(), 1);
+}
+
+/// `docs/specs/runs.md`, Usage limit, Waiting: the harness went on past the
+/// refusal, so a later failure is not the usage limit.
+#[test_log::test(tokio::test)]
+async fn a_turn_that_went_on_past_a_refusal_and_then_failed_is_not_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(
+        dir.path(),
+        &[
+            rejected_until(at("2026-10-13T07:50:00Z")),
+            saying("Went on."),
+            json!({
+                "type": "result",
+                "subtype": "success",
+                "is_error": true,
+                "terminal_reason": "api_error",
+                "api_error_status": 529,
+                "result": "API Error: 529 Overloaded",
+            }),
+        ],
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(error, SessionError::Infrastructure(_)),
+        "{error:?}"
+    );
+    assert_eq!(transcript_of(dir.path()).waits, []);
 }
