@@ -1803,12 +1803,12 @@ fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
         turn_ended.clone(),
         line(transcript::usage_limit_waiting(
             time("2026-10-13T10:00:05Z"),
-            time("2026-10-13T12:00:00Z"),
+            Some(time("2026-10-13T12:00:00Z")),
         )),
         line(transcript::usage_limit_waited(time("2026-10-13T12:00:01Z"))),
         line(transcript::usage_limit_waiting(
             time("2026-10-13T12:00:30Z"),
-            time("2026-10-13T14:00:00Z"),
+            None,
         )),
         session_ended("2026-10-13T12:01:00Z"),
     ]);
@@ -1826,12 +1826,12 @@ fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
         [
             Wait {
                 at: time("2026-10-13T10:00:05Z"),
-                until: time("2026-10-13T12:00:00Z"),
+                until: Some(time("2026-10-13T12:00:00Z")),
                 end: End::At(time("2026-10-13T12:00:01Z")),
             },
             Wait {
                 at: time("2026-10-13T12:00:30Z"),
-                until: time("2026-10-13T14:00:00Z"),
+                until: None,
                 end: End::At(time("2026-10-13T12:01:00Z")),
             },
         ]
@@ -1850,8 +1850,36 @@ fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
     );
 }
 
+/// A record kept before a wait could have no reset time.
+#[test_log::test]
+fn an_old_records_wait_reads_with_its_reset_time() {
+    let record = calling(&[
+        serde_json::json!({
+            "type": "linewright-usage-limit",
+            "at": "2026-10-13T10:00:05Z",
+            "until": "2026-10-13T12:00:00Z",
+        }),
+        serde_json::json!({"type": "linewright-usage-limit-ended", "at": "2026-10-13T12:00:01Z"}),
+    ]);
+
+    let session = transcript::parse(&record, Written::Whole);
+
+    assert_eq!(
+        session.waits,
+        [Wait {
+            at: time("2026-10-13T10:00:05Z"),
+            until: Some(time("2026-10-13T12:00:00Z")),
+            end: End::At(time("2026-10-13T12:00:01Z")),
+        }]
+    );
+}
+
 fn waiting(at: &str, until: &str) -> serde_json::Value {
-    serde_json::from_str(&transcript::usage_limit_waiting(time(at), time(until))).unwrap()
+    serde_json::from_str(&transcript::usage_limit_waiting(
+        time(at),
+        Some(time(until)),
+    ))
+    .unwrap()
 }
 
 fn waited(at: &str) -> serde_json::Value {

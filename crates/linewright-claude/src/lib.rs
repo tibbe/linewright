@@ -730,16 +730,19 @@ impl ClaudeCode {
             log.lock().expect("the log's lock is not poisoned").errors =
                 self.0.redaction.apply(&errors);
         };
-        let outcome = tokio::time::timeout_at(spec.deadline.at(), async {
-            let ((result, refusal, last_message), (), ()) =
-                tokio::join!(read_stdout, read_stderr, feed);
-            (result, refusal, last_message, child.wait().await)
-        })
-        .await;
+        let outcome = tokio::select! {
+            biased;
+            ran = async {
+                let ((result, refusal, last_message), (), ()) =
+                    tokio::join!(read_stdout, read_stderr, feed);
+                (result, refusal, last_message, child.wait().await)
+            } => Ok(ran),
+            () = spec.waits.deadline().reached() => Err(()),
+        };
         let session = session.id().to_string();
         let last_message = match &outcome {
             Ok((_, _, last_message, _)) => last_message.as_deref(),
-            Err(_) => None,
+            Err(()) => None,
         };
         let transcript = copy_transcript(
             &session,

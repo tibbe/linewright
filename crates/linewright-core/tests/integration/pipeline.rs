@@ -1116,7 +1116,7 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
             *given.lock().unwrap() = Some((
                 call.spec.model.clone(),
                 call.spec.effort,
-                call.spec.deadline.at() - tokio::time::Instant::now(),
+                call.spec.waits.deadline().clone(),
             ));
             Err(linewright_core::harness::SessionError::TimedOut {
                 log_tail: String::new(),
@@ -1132,12 +1132,16 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
 
     world.poll().await;
 
-    let (model, effort, left) = given.lock().unwrap().clone().expect("implement ran");
+    let (model, effort, deadline) = given.lock().unwrap().clone().expect("implement ran");
     assert_eq!((model.as_str(), effort), ("opus", Effort::Xhigh));
+    tokio::time::pause();
+    let reached_within =
+        |within| tokio::time::timeout(std::time::Duration::from_mins(within), deadline.reached());
     assert!(
-        left > std::time::Duration::from_mins(89) && left <= std::time::Duration::from_mins(90),
-        "{left:?}"
+        reached_within(89).await.is_err(),
+        "reached before 90 minutes"
     );
+    assert!(reached_within(2).await.is_ok(), "not reached at 90 minutes");
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
         comment.starts_with(

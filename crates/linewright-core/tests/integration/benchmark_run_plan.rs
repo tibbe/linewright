@@ -203,7 +203,7 @@ fn benchmark_runs_start_in_the_order_they_were_launched() {
 #[test_log::test]
 fn a_hold_holds_each_trial_and_the_benchmark_run_waits_for_it() {
     let usage_limit = BenchmarkRunHold::UsageLimit {
-        resets_at: at("2026-11-17T14:30:00Z"),
+        resets_at: Some(at("2026-11-17T14:30:00Z")),
     };
     let open_benchmark_runs = [benchmark_run(1, (1, 2, 1), &[])];
 
@@ -311,7 +311,7 @@ fn neither_the_environment_nor_a_file_holds_a_benchmark_run() {
         ..Memory::default()
     };
     let unusable = unusable_files();
-    let in_force = InForce::of(&memory, at("2026-11-17T12:00:00Z"), &unusable);
+    let in_force = InForce::of(&memory, &unusable);
 
     assert_eq!(Gate::at(&in_force, false), Gate::Open);
 }
@@ -322,7 +322,7 @@ fn a_drain_holds_a_benchmark_run_before_the_usage_limit() {
         usage_limit: limited_until("2026-11-17T14:30:00Z").usage_limit,
         ..draining_since("2026-11-17T11:00:00Z")
     };
-    let in_force = InForce::of(&memory, at("2026-11-17T12:00:00Z"), &[]);
+    let in_force = InForce::of(&memory, &[]);
 
     assert_eq!(
         Gate::at(&in_force, true),
@@ -333,19 +333,19 @@ fn a_drain_holds_a_benchmark_run_before_the_usage_limit() {
 #[test_log::test]
 fn a_hold_shows_before_the_pipelines_wait_for_room() {
     let memory = limited_until("2026-11-17T14:30:00Z");
-    let in_force = InForce::of(&memory, at("2026-11-17T12:00:00Z"), &[]);
+    let in_force = InForce::of(&memory, &[]);
 
     assert_eq!(
         Gate::at(&in_force, true),
         Gate::Held(BenchmarkRunHold::UsageLimit {
-            resets_at: at("2026-11-17T14:30:00Z")
+            resets_at: Some(at("2026-11-17T14:30:00Z"))
         })
     );
 }
 
 #[test_log::test]
 fn a_step_waits_while_a_run_of_the_pipeline_waits_for_room() {
-    let in_force = InForce::of(&Memory::default(), at("2026-11-17T12:00:00Z"), &[]);
+    let in_force = InForce::of(&Memory::default(), &[]);
 
     assert_eq!(Gate::at(&in_force, true), Gate::PipelineWaitsForRoom);
     assert_eq!(Gate::at(&in_force, false), Gate::Open);

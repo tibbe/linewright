@@ -79,6 +79,7 @@ pub mod tracking;
 pub mod transcript;
 pub mod tree;
 pub mod trial;
+pub mod usage_limit;
 pub mod variable_names;
 pub mod webhook;
 pub mod winding_up;

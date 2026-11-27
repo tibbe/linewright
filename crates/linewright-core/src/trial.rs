@@ -18,7 +18,6 @@ use std::time::Instant;
 use anyhow::{Context, Result, anyhow};
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info, warn};
 
 use crate::clock::{Clock, RunningFrom, SystemClock};
@@ -28,7 +27,7 @@ use crate::domain::{Item, Scope};
 use crate::environment::trials::{self, BuildLog};
 use crate::environment::{self, Source};
 use crate::factory::FactoryConfig;
-use crate::harness::{GhReach, Harness, UsageLimit};
+use crate::harness::{GhReach, Harness};
 use crate::repo_files::{RepoLayer, holding};
 use crate::run::{self, Shell, ShellParts};
 use crate::runs::files::RunFiles;
@@ -37,6 +36,7 @@ use crate::session::{Cancellation, Sessions};
 use crate::store::local::LocalStore;
 use crate::store::{RepoSettings, Store};
 use crate::task::{Task, TaskItemKind};
+use crate::usage_limit::UsageLimitWaits;
 use crate::winding_up::WindingUp;
 use crate::work_settings::RunKind;
 use crate::{COMMAND, version_and_commit};
@@ -64,12 +64,11 @@ const BUILD_SECONDS: &str = "build-seconds";
 const COST: &str = "cost.json";
 const COMMITS: &str = "commits.git";
 
-/// What a trial or a scorer runs under: what cancels its run, and where a
-/// session refused for the usage limit reports the limit before it waits
-/// until the limit resets and goes on.
+/// What a trial or a scorer runs under: what cancels its run, and where its
+/// sessions' waits for the usage limit hold runs.
 pub struct Under {
     pub cancel: Cancellation,
-    pub report_refusal: UnboundedSender<UsageLimit>,
+    pub usage_limit: UsageLimitWaits,
 }
 
 /// The link to the attachment `name` from the writes, its path from them.
@@ -502,7 +501,7 @@ async fn run_in(
             harness,
             &config,
             own.clones(),
-            &under.report_refusal,
+            &under.usage_limit,
         ),
         spec_glob: config.spec_glob,
         spec_lookback: config.spec_lookback,
@@ -696,8 +695,8 @@ impl Setting {
 
     /// The parts the sessions run on `task` in this setting share, with
     /// `config` and `harness`: they fetch from and clone `store`, make their
-    /// clones in `clones`, and report a refusal for the usage limit to
-    /// `report_refusal`.
+    /// clones in `clones`, and their waits for the usage limit hold runs in
+    /// `usage_limit`.
     pub(crate) fn sessions(
         &self,
         task: &Task,
@@ -705,7 +704,7 @@ impl Setting {
         harness: Arc<dyn Harness>,
         config: &FactoryConfig,
         clones: Clones,
-        report_refusal: &UnboundedSender<UsageLimit>,
+        usage_limit: &UsageLimitWaits,
     ) -> Sessions {
         Sessions {
             store,
@@ -719,7 +718,7 @@ impl Setting {
             environment: self.environment.clone(),
             gh: self.gh(),
             result_retries: config.result_retries,
-            report_refusal: report_refusal.clone(),
+            usage_limit: usage_limit.clone(),
         }
     }
 }

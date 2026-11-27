@@ -21,7 +21,7 @@ pub fn card_line(card: &Card) -> Option<Phrase> {
 fn ends(hold: &Hold) -> Phrase {
     match hold {
         Hold::Drain => Phrase::default().code("serve").text(" restarts"),
-        Hold::UsageLimit { .. } => "the usage limit resets".into(),
+        Hold::UsageLimit { .. } => "no session waits for it".into(),
         Hold::Environment => "the environment is built".into(),
         Hold::File(file) => Phrase::from("the default branch fixes ").code(file.path.clone()),
     }

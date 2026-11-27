@@ -1570,7 +1570,7 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
     };
     let refused = next(turn_ended_marker(at("2026-10-14T12:00:28Z")), "#s1-working").await;
     let waiting = next(
-        usage_limit_waiting(at("2026-10-14T12:00:30Z"), at("2026-10-14T14:30:00Z")),
+        usage_limit_waiting(at("2026-10-14T12:00:30Z"), Some(at("2026-10-14T14:30:00Z"))),
         "#s1-working",
     )
     .await;

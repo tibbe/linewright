@@ -395,10 +395,12 @@ fn working_html(n: usize, model: &Session) -> String {
         .then(|| {
             let (text, lasted) = match model.waiting() {
                 Some(wait) => (
-                    format!(
-                        "waiting for the usage limit, until {}",
-                        html::time(wait.until)
-                    ),
+                    match wait.until {
+                        Some(until) => {
+                            format!("waiting for the usage limit, until {}", html::time(until))
+                        }
+                        None => "waiting for the usage limit".to_string(),
+                    },
                     model
                         .last_at()
                         .or(model.started_at)

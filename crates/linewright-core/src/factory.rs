@@ -28,7 +28,7 @@ use crate::domain::{
 };
 use crate::ending::Ends;
 use crate::environment::{self, Environment, SetupRead};
-use crate::harness::{GhReach, Harness, UsageLimit};
+use crate::harness::{GhReach, Harness};
 use crate::holds::{Hold, InForce};
 use crate::pull_records::PullRecords;
 use crate::pushed_branches::PushedBranches;
@@ -45,6 +45,7 @@ use crate::spec_glob::SpecGlob;
 use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::SESSION_TOKEN_VARIABLE;
 use crate::store::Store;
+use crate::usage_limit::{UsageLimitHeld, UsageLimitWaits};
 use crate::webhook::{self, Pending};
 use crate::winding_up::WindingUp;
 use crate::work_settings::{Environments, RunKind, SessionWork};
@@ -176,7 +177,8 @@ pub struct Factory {
     benchmark_runs: BenchmarkRunsRunner,
     /// What the benchmark runs' steps take from the last reconcile, if any.
     last_reconcile: Option<LastReconcile>,
-    refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
+    /// The usage limit's hold, as the sessions' waits make it.
+    usage_limit: tokio::sync::watch::Receiver<Option<UsageLimitHeld>>,
     live: HashMap<Id, LiveEntry>,
     ends: Ends,
     winding_up: WindingUp,
@@ -203,12 +205,18 @@ pub struct Factory {
     asked_by_hand: BTreeSet<AutomationName>,
 }
 
-/// What the holds over benchmark runs' steps are taken from: the last
-/// reconcile's time, at which the pipeline's runs are held too, and whether
-/// a run of the pipeline waited for room then.
+/// How the usage limit's hold changed as the factory took it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HoldTaken {
+    Unchanged,
+    InForce,
+    Lifted,
+}
+
+/// What benchmark runs' steps take from the last reconcile: whether a run of
+/// the pipeline waited for room then.
 #[derive(Clone, Copy, Debug)]
 struct LastReconcile {
-    at: Timestamp,
     pipeline_waits_for_room: bool,
 }
 
@@ -289,7 +297,7 @@ impl Factory {
             .context("reading the automations' last scheduled runs")?;
         let triggers_seen = TriggersSeen::load(&config.database).await?;
         let attempts = Attempts::load(&config.database).await?;
-        let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
+        let usage_limit = UsageLimitWaits::default();
         let benchmark_runs = BenchmarkRunsRunner::new(
             BenchmarkRuns::new(config.database.clone()),
             clock.clone(),
@@ -299,7 +307,7 @@ impl Factory {
                 ..config.clone()
             },
             config.max_trials,
-            report_refusal.clone(),
+            usage_limit.clone(),
         );
         let runs = Runs::new(config.database.clone());
         let pulls = PullRecords::load(&config.database)
@@ -343,7 +351,7 @@ impl Factory {
                 environment: environment.source(),
                 gh: GhReach::Direct,
                 result_retries: config.result_retries,
-                report_refusal,
+                usage_limit: usage_limit.clone(),
             },
             spec_glob: config.spec_glob,
             spec_lookback: config.spec_lookback,
@@ -373,7 +381,7 @@ impl Factory {
             runs: JoinSet::new(),
             benchmark_runs,
             last_reconcile: None,
-            refusals,
+            usage_limit: usage_limit.held(),
             live: HashMap::new(),
             ends: config.ends,
             winding_up: config.winding_up,
@@ -692,7 +700,17 @@ impl Factory {
                         self.benchmark_runs.finished(ended).await;
                     }
                     () = publish.benchmark_runs.changed() => {}
-                    Some(limit) = self.refusals.recv() => self.refused(limit),
+                    Ok(()) = self.usage_limit.changed() => {
+                        if self.take_usage_limit() == HoldTaken::Lifted {
+                            let subjects: [webhook::Subject; 0] = [];
+                            if let Err(e) = self.read_and_reconcile(subjects, true).await {
+                                error!(
+                                    error = format!("{e:#}"),
+                                    "acting on the end of the usage limit failed; the next poll catches up"
+                                );
+                            }
+                        }
+                    }
                     end = self.environment.next_build_end(), if self.environment.is_building() => {
                         self.environment.ended(end);
                         let subjects: [webhook::Subject; 0] = [];
@@ -723,18 +741,15 @@ impl Factory {
     }
 
     /// Starts what the plan says of the benchmark runs, none while a drain or
-    /// the usage limit holds them at the last reconcile, or while a run of
-    /// the pipeline waits for room. Before the first reconcile, a usage
-    /// limit reported holds them.
+    /// the usage limit holds them, or while a run of the pipeline waited for
+    /// room at the last reconcile.
     async fn tick_benchmark_runs(&mut self) {
         let LastReconcile {
-            at,
             pipeline_waits_for_room,
         } = self.last_reconcile.unwrap_or(LastReconcile {
-            at: Timestamp::MIN_UTC,
             pipeline_waits_for_room: false,
         });
-        let in_force = InForce::of(&self.memory, at, &[]);
+        let in_force = InForce::of(&self.memory, &[]);
         self.benchmark_runs
             .tick(Gate::at(&in_force, pipeline_waits_for_room))
             .await;
@@ -910,9 +925,7 @@ impl Factory {
     ) -> Decisions {
         let kept = self.kept.insert(kept).clone();
         let snapshot = &kept.snapshot;
-        if let Some(resets_at) = self.memory.lift_usage_limit(now) {
-            info!(%resets_at, "usage limit reset; sessions start again");
-        }
+        self.take_usage_limit();
         self.note_drain();
         self.memory.awaits_environment = !self.environment.ready();
         let live = self.live_runs();
@@ -939,7 +952,6 @@ impl Factory {
             &kept.repo.unusable,
         );
         self.last_reconcile = Some(LastReconcile {
-            at: now,
             pipeline_waits_for_room: decided.wait_for_room(),
         });
         let mut actions = std::mem::take(&mut decided.actions);
@@ -1114,14 +1126,11 @@ impl Factory {
         self.settle().await;
     }
 
-    /// Takes in the runs that have ended and the usage limits reported, so
-    /// that a run that ends during the read that follows stays live for it.
+    /// Takes in the runs that have ended, so that a run that ends during the
+    /// read that follows stays live for it.
     async fn reap_before_reading(&mut self) {
         while let Some(result) = self.runs.try_join_next_with_id() {
             self.finished(result).await;
-        }
-        while let Ok(limit) = self.refusals.try_recv() {
-            self.refused(limit);
         }
         self.environment.take_ended().await;
     }
@@ -1160,9 +1169,25 @@ impl Factory {
         }
     }
 
-    fn refused(&mut self, UsageLimit { resets_at }: UsageLimit) {
-        if self.memory.hold_until(resets_at) {
-            info!(%resets_at, "usage limit in force; no session starts until it resets");
+    /// Takes the usage limit's hold as the sessions' waits make it now.
+    fn take_usage_limit(&mut self) -> HoldTaken {
+        let held = *self.usage_limit.borrow_and_update();
+        if held == self.memory.usage_limit {
+            return HoldTaken::Unchanged;
+        }
+        self.memory.usage_limit = held;
+        match held {
+            Some(UsageLimitHeld { resets_at }) => {
+                info!(
+                    resets_at = resets_at.map(|at| at.to_rfc3339()),
+                    "usage limit in force; no session starts while a session waits for it"
+                );
+                HoldTaken::InForce
+            }
+            None => {
+                info!("no session waits for the usage limit; sessions start again");
+                HoldTaken::Lifted
+            }
         }
     }
 

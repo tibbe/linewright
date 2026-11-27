@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use linewright_core::apply::hand_back::LogTail;
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend};
 use linewright_core::factory::FactoryConfig;
-use linewright_core::harness::{SessionError, UsageLimit};
+use linewright_core::harness::SessionError;
 use linewright_core::reconcile::WorkKind;
 use linewright_core::runs::UnexpectedEnd;
 use linewright_core::session::Ended;
@@ -20,6 +20,7 @@ use linewright_core::testing::scores::*;
 use linewright_core::testing::trial_runs::{self, *};
 use linewright_core::testing::*;
 use linewright_core::trial::scorer::{self, Score, ScorerRecord, Unscored};
+use linewright_core::usage_limit::UsageLimitHeld;
 use linewright_core::work_settings::{Effort, Partial, Setup, SetupCommand, StageKey, StageTable};
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -365,7 +366,8 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
 /// applies to a scorer as to a run of the pipeline (`docs/specs/runs.md`,
 /// Usage limit).
 #[test_log::test(tokio::test)]
-async fn a_scorers_session_refused_for_the_usage_limit_reports_it_and_resumes_once_it_resets() {
+async fn a_scorers_session_refused_for_the_usage_limit_holds_runs_while_it_waits_and_resumes_once_it_resets()
+ {
     let under = tempfile::tempdir().unwrap();
     let (task_dir, out) = triage_output(under.path(), "done").await;
     let task = Task::open(&task_dir).await.unwrap();
@@ -388,14 +390,23 @@ async fn a_scorers_session_refused_for_the_usage_limit_reports_it_and_resumes_on
     });
     let config = config(&under.path().join("work").join(REPO)).await;
     let winding_up = config.winding_up.clone();
-    let (runner_under, mut reported) = trial_runs::under_reporting();
+    let (runner_under, held) = trial_runs::under_reporting();
 
     let scored = scorer::run(&task, &scoreable, record, harness, config, &runner_under).await;
     winding_up.wait().await;
 
     assert!(scored.is_ok(), "{scored:?}");
     let resets_at = reset.given();
-    assert_eq!(reported.try_recv().ok(), Some(UsageLimit { resets_at }));
+    eventually(|| held.values().last() == Some(&None)).await;
+    assert_eq!(
+        held.values(),
+        [
+            Some(UsageLimitHeld {
+                resets_at: Some(resets_at)
+            }),
+            None
+        ]
+    );
     let follow_up = marker("prompts/follow-ups/usage-limit-reset.md", &[]);
     assert_eq!(*followups.lock().unwrap(), [None, Some(follow_up)]);
 }

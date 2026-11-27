@@ -6,10 +6,11 @@ use chrono::TimeDelta;
 use linewright_core::clock::Clock;
 use linewright_core::domain::{Login, Number, Timestamp};
 use linewright_core::factory::Factory;
-use linewright_core::harness::{SessionError, UsageLimit};
+use linewright_core::harness::SessionError;
 use linewright_core::reconcile::{Action, Subject, WorkKind};
 use linewright_core::store::Store;
 use linewright_core::testing::*;
+use linewright_core::usage_limit::UsageLimitHeld;
 use linewright_core::webhook::Pending;
 use serde_json::json;
 
@@ -213,6 +214,63 @@ async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_bran
     assert_eq!(cancelled.len(), 1, "{cancelled:?}");
 }
 
+/// `docs/specs/runs.md`, Holds: the usage limit ends when no session waits
+/// for it.
+#[test_log::test(tokio::test)]
+async fn cancelling_the_waiting_run_ends_the_hold_before_the_reset() {
+    let (mut world, ticket) = refused().await;
+    world.store.unlabel_as(ticket, "ready-for-agent").unwrap();
+    world.factory.cycle().await.unwrap();
+    world.factory.settle().await;
+    triage(&world);
+    let new = world
+        .store
+        .open_issue("reporter", "It broke", "How?", &["needs-triage"]);
+
+    let actions = world.factory.cycle().await.unwrap();
+
+    assert_eq!(started(&actions), [Subject::Issue(new)]);
+    assert!(world.clock.now() < usage_limit_resets_at());
+}
+
+fn an_hour_after_the_reset() -> Timestamp {
+    usage_limit_resets_at() + TimeDelta::hours(1)
+}
+
+fn refused_an_hour_later(call: &Call) -> Answer {
+    refused_until(an_hour_after_the_reset(), call)
+}
+
+/// `docs/specs/runs.md`, Holds and Usage limit.
+#[test_log::test(tokio::test)]
+async fn two_sessions_waiting_hold_runs_until_both_have_stopped_waiting() {
+    let mut world = World::new().await;
+    implement_turns(
+        &world,
+        vec![refused_for_the_usage_limit, refused_an_hour_later],
+    );
+    open_ticket(&world, "Do the thing");
+    open_ticket(&world, "Do the other thing");
+    world.factory.cycle().await.unwrap();
+    world.clock.next_sleep().await;
+    world.clock.next_sleep().await;
+    triage(&world);
+    let new = world
+        .store
+        .open_issue("reporter", "It broke", "How?", &["needs-triage"]);
+
+    advance_past_the_reset(&world, 0);
+    eventually(|| world.harness.prompts(WorkKind::Implement).len() == 3).await;
+    let while_one_waits = world.factory.cycle().await.unwrap();
+    advance_to(&world, an_hour_after_the_reset());
+    world.factory.settle().await;
+    let once_none_waits = world.factory.cycle().await.unwrap();
+
+    assert_eq!(started(&while_one_waits), []);
+    assert_eq!(started(&once_none_waits), [Subject::Issue(new)]);
+    assert_eq!(world.store.pulls().len(), 2);
+}
+
 #[test_log::test(tokio::test)]
 async fn a_stop_during_the_wait_drops_the_run() {
     let mut world = World::new().await;
@@ -249,7 +307,7 @@ impl Served {
         Served { world, serving }
     }
 
-    fn usage_limit(&self) -> Option<UsageLimit> {
+    fn usage_limit(&self) -> Option<UsageLimitHeld> {
         self.serving
             .served
             .borrow()
@@ -265,9 +323,9 @@ impl Served {
     }
 }
 
-fn the_usage_limit() -> UsageLimit {
-    UsageLimit {
-        resets_at: usage_limit_resets_at(),
+fn the_usage_limit() -> UsageLimitHeld {
+    UsageLimitHeld {
+        resets_at: Some(usage_limit_resets_at()),
     }
 }
 
@@ -290,6 +348,27 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     advance_past_the_reset(&served.world, 1);
 
     eventually(|| served.usage_limit().is_none()).await;
+    served.stop().await;
+}
+
+/// `docs/specs/runs.md`, Usage limit, The reset time and A reset time
+/// already passed.
+#[test_log::test(tokio::test)]
+async fn a_reset_already_passed_is_shown_as_the_harness_stated_it_while_it_is_waited_out() {
+    let world = World::new().await;
+    world.harness.on(WorkKind::Implement, |call| {
+        refused_until(at("2026-09-30T00:00:00Z"), call)
+    });
+    open_ticket(&world, "Do the thing");
+    let served = Served::start(world).await;
+
+    let waited_until = served.world.clock.next_sleep().await;
+    let stated = Some(UsageLimitHeld {
+        resets_at: Some(at("2026-09-30T00:00:00Z")),
+    });
+
+    eventually(|| served.usage_limit() == stated).await;
+    assert!(waited_until > at(STARTED), "{waited_until}");
     served.stop().await;
 }
 

@@ -7,8 +7,7 @@ use linewright_claude::ClaudeCode;
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright_core::domain::Number;
 use linewright_core::harness::{
-    Deadline, GhReach, Harness, HarnessSettings, Purpose, Reported, Reporter, SessionError,
-    SessionSpec,
+    GhReach, Harness, HarnessSettings, Purpose, Reported, Reporter, SessionError, SessionSpec,
 };
 use linewright_core::reconcile::{Subject, WorkKind};
 use linewright_core::redaction::Redaction;
@@ -16,6 +15,7 @@ use linewright_core::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 use linewright_core::testing::*;
 use linewright_core::transcript::{Course, Prompt, What};
 use linewright_core::trial::{Gate, Upstream};
+use linewright_core::usage_limit::UsageLimitWaits;
 use linewright_core::work_settings::Effort;
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -72,7 +72,8 @@ async fn timed_out_once_said(
     mut session: SessionSpec,
     said: &str,
 ) -> SessionError {
-    session.deadline = Deadline::after(tokio::time::Instant::now(), Duration::from_hours(1));
+    session.waits =
+        UsageLimitWaits::default().session(tokio::time::Instant::now(), Duration::from_hours(1));
     let record = session.record.clone();
     let turn = tokio::spawn(async move { harness.start(&session).await });
     until_said(&record, said).await;
@@ -133,7 +134,8 @@ fn triage_session(dir: &Path) -> SessionSpec {
         effort: Effort::Medium,
         environment: Arc::new(Given::default()),
         gh: GhReach::Direct,
-        deadline: Deadline::after(tokio::time::Instant::now(), Duration::from_secs(30)),
+        waits: UsageLimitWaits::default()
+            .session(tokio::time::Instant::now(), Duration::from_secs(30)),
         report: Reporter::new(|_| {}),
     }
 }

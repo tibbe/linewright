@@ -1413,7 +1413,7 @@ fn a_pull_request_whose_run_is_held_back_says_paused_or_queued_ahead_of_what_the
     );
 
     let paused = Stop::Held(Held::Paused(Hold::UsageLimit {
-        resets_at: at(RESETS_AT),
+        resets_at: Some(at(RESETS_AT)),
     }));
     assert_eq!(
         [1, 2, 3, 30].map(|n| line(&queued, n)),
@@ -1611,7 +1611,7 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
             blocked.clone(),
             assigned.clone(),
             Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
-                resets_at: at(RESETS_AT)
+                resets_at: Some(at(RESETS_AT))
             })))
         ]
     );
@@ -1667,7 +1667,9 @@ fn a_held_card_names_the_first_hold() {
     );
     assert_eq!(
         line_under(testing::limited_until(RESETS_AT), vec![]),
-        Some(CardLine::Held(Held::Paused(Hold::UsageLimit { resets_at })))
+        Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
+            resets_at: Some(resets_at)
+        })))
     );
     assert_eq!(
         line_under(awaiting_the_environment.clone(), vec![]),
@@ -1723,7 +1725,7 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
         [1, 2].map(|n| line(&limited, n)),
         [
             Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
-                resets_at: at(RESETS_AT)
+                resets_at: Some(at(RESETS_AT))
             }))),
             run(WorkKind::Triage)
         ]
@@ -2543,7 +2545,7 @@ fn a_triage_card_says_what_a_ready_card_would() {
             (Some(CardLine::AssignedTo(Login::new("alice"))), None),
             (
                 Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
-                    resets_at: at(RESETS_AT)
+                    resets_at: Some(at(RESETS_AT))
                 }))),
                 Some(CardStatus::PausedOrQueued)
             ),

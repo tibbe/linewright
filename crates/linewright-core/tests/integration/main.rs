@@ -78,6 +78,7 @@ mod trial_environments;
 mod trial_state;
 mod update_push;
 mod usage_limit;
+mod usage_limit_waits;
 mod webhook;
 mod winding_up;
 mod workflow_run;

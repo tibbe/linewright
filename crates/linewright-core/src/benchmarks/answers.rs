@@ -884,7 +884,10 @@ mod tests {
                     max_trials: 1
                 }),
                 Shown::Waiting(WaitingFor::Hold(BenchmarkRunHold::UsageLimit {
-                    resets_at: "2026-11-17T14:30:00Z".parse().unwrap()
+                    resets_at: Some("2026-11-17T14:30:00Z".parse().unwrap())
+                })),
+                Shown::Waiting(WaitingFor::Hold(BenchmarkRunHold::UsageLimit {
+                    resets_at: None
                 })),
             ]
             .map(line),
@@ -896,6 +899,8 @@ mod tests {
                 "benchmark run 3: waiting for a place under max-trials: 1 of 1 in flight, \
                  launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
                 "benchmark run 3: waiting for the usage limit, until 2026-11-17 14:30:00 UTC, \
+                 launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "benchmark run 3: waiting for the usage limit, \
                  launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
             ]
         );

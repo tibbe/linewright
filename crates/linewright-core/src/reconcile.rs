@@ -9,7 +9,6 @@ use crate::domain::{
     Marking, Merge, MergeMethod, MergedPull, Number, Pull, PullState, Requirement, Snapshot,
     StatusLabel, SubIssue, TicketBranchName, Timestamp, Windows, label,
 };
-use crate::harness::UsageLimit;
 use crate::holds::{Hold, InForce};
 use crate::lifecycle::{
     Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
@@ -21,6 +20,7 @@ use crate::pull_records::PullRecords;
 use crate::repo_files::{FileError, Unusable};
 use crate::runs::{Ending, RunId};
 use crate::spec_glob::SpecGlob;
+use crate::usage_limit::UsageLimitHeld;
 use crate::work_settings::RunKind;
 use crate::workflow_run::{self, CompletedAttempt, TriggeredRun, TriggersSeen};
 use crate::working_pull::{self, Row as WorkingRow};
@@ -268,7 +268,8 @@ pub struct LiveRun {
 pub struct Memory {
     pub ended_runs: Vec<EndedRun>,
     pub pulls: PullRecords,
-    pub usage_limit: Option<UsageLimit>,
+    /// Set while a session waits for the usage limit.
+    pub usage_limit: Option<UsageLimitHeld>,
     /// Set from when a drain of `serve` begins until it exits.
     pub drain: Option<Drain>,
     /// Set while there is a setup command and no environment
@@ -297,34 +298,10 @@ impl Memory {
         self.ended_runs.iter().filter(move |r| r.pr == pr)
     }
 
-    pub fn holds_starts(&self, now: Timestamp) -> bool {
-        self.usage_limit.is_some_and(|limit| now < limit.resets_at)
-    }
-
-    /// The latest reset wins. Returns whether the hold changed.
-    pub fn hold_until(&mut self, resets_at: Timestamp) -> bool {
-        if self
-            .usage_limit
-            .is_some_and(|held| held.resets_at >= resets_at)
-        {
-            return false;
-        }
-        self.usage_limit = Some(UsageLimit { resets_at });
-        true
-    }
-
     /// Whether a drain has ended `serve`, with `runs_in_flight` runs still
     /// in flight (docs/specs/operation.md, "Stopping", Draining).
     pub fn drained(&self, runs_in_flight: usize) -> bool {
         self.drain.is_some() && runs_in_flight == 0
-    }
-
-    /// Returns the reset it lifted.
-    pub fn lift_usage_limit(&mut self, now: Timestamp) -> Option<Timestamp> {
-        if self.holds_starts(now) {
-            return None;
-        }
-        self.usage_limit.take().map(|limit| limit.resets_at)
     }
 }
 
@@ -673,7 +650,7 @@ pub enum Wait {
         max_runs: usize,
     },
     UsageLimit {
-        resets_at: Timestamp,
+        resets_at: Option<Timestamp>,
     },
     /// Ends only with a restart of `serve`.
     Drain,
@@ -805,7 +782,7 @@ pub fn decisions(
         in_flight,
         max_runs: policy.max_runs,
     };
-    let in_force = InForce::of(memory, now, unusable);
+    let in_force = InForce::of(memory, unusable);
     let held_by_runs = held_by_runs(snapshot, live, &policy.linewright);
     let mut plan = Plan {
         ceiling,

@@ -373,7 +373,7 @@ async fn a_waiting_benchmark_runs_heading_and_facts_say_what_it_waits_for() {
         &pages,
         linewright_core::benchmarks::Shown::Waiting(linewright_core::benchmarks::WaitingFor::Hold(
             linewright_core::holds::BenchmarkRunHold::UsageLimit {
-                resets_at: "2026-11-17T14:30:00Z".parse().unwrap(),
+                resets_at: Some("2026-11-17T14:30:00Z".parse().unwrap()),
             },
         )),
     )

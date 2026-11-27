@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright_core::automation::{Automation, LastScheduledRuns};
 use linewright_core::domain::*;
-use linewright_core::harness::UsageLimit;
 use linewright_core::holds::Hold;
 use linewright_core::prompts::{self, Readers};
 use linewright_core::reconcile::*;
@@ -13,6 +12,7 @@ use linewright_core::testing;
 use linewright_core::testing::{
     LINEWRIGHT, REQUIRED, closed_by, closed_item, policy, snapshot_of, sub_issue,
 };
+use linewright_core::usage_limit::UsageLimitHeld;
 use linewright_core::workflow_run::{
     AttemptConclusion, AttemptId, CompletedAttempt, Conclusion, Filters, Seen, TriggersSeen,
     WorkflowRunId,
@@ -3654,9 +3654,9 @@ fn a_run_by_hand_leaves_a_pending_attempt_pending_and_the_triggers_seen_as_they_
     Hold::Drain,
 )]
 #[case::the_usage_limit(
-    Memory { usage_limit: Some(UsageLimit { resets_at: t(90) }), ..Memory::default() },
+    Memory { usage_limit: Some(held_until(90)), ..Memory::default() },
     &[],
-    Hold::UsageLimit { resets_at: t(90) },
+    Hold::UsageLimit { resets_at: Some(t(90)) },
 )]
 #[case::no_environment(
     Memory { awaits_environment: true, ..Memory::default() },
@@ -3674,7 +3674,7 @@ fn a_run_by_hand_leaves_a_pending_attempt_pending_and_the_triggers_seen_as_they_
 #[case::a_drain_and_the_usage_limit_by_rank(
     Memory {
         drain: Some(Drain { since: t(0) }),
-        usage_limit: Some(UsageLimit { resets_at: t(90) }),
+        usage_limit: Some(held_until(90)),
         ..Memory::default()
     },
     &[],
@@ -4100,25 +4100,26 @@ fn fixed_twice() -> Vec<EndedRun> {
     vec![done(22, WorkKind::FixCi, 3), done(22, WorkKind::FixCi, 6)]
 }
 
-fn under_usage_limit_until(resets_at: i64) -> Memory {
-    Memory {
-        usage_limit: Some(UsageLimit {
-            resets_at: t(resets_at),
-        }),
-        ended_runs: fixed_twice(),
-        ..Memory::default()
+/// The usage limit's hold, stating a reset at `resets_at` minutes past 12:00.
+fn held_until(resets_at: i64) -> UsageLimitHeld {
+    UsageLimitHeld {
+        resets_at: Some(t(resets_at)),
     }
 }
 
-/// The decisions at 13:10 with room for every run, under a usage limit
-/// that resets at `resets_at` minutes past 12:00.
-fn under_usage_limit(resets_at: i64) -> Vec<Action> {
+/// The decisions at 13:10 with room for every run, with the usage limit's
+/// hold `usage_limit`.
+fn under_usage_limit(usage_limit: Option<UsageLimitHeld>) -> Vec<Action> {
     let (world, live, automations) = work_of_every_kind();
     let policy = Policy {
         max_runs: 10,
         ..policy()
     };
-    let memory = under_usage_limit_until(resets_at);
+    let memory = Memory {
+        usage_limit,
+        ended_runs: fixed_twice(),
+        ..Memory::default()
+    };
     reconcile(&world, &live, &memory, &automations, t(70), &policy, &[])
 }
 
@@ -4152,9 +4153,16 @@ fn pull_hand_backs_apart(actions: Vec<Action>) -> (Vec<Action>, Vec<Action>) {
     })
 }
 
+#[rstest::rstest]
+#[case::with_a_reset_time(Some(t(80)))]
+#[case::with_none(None)]
+#[case::with_a_reset_time_passed(Some(t(60)))]
 #[test_log::test]
-fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions_are_taken() {
-    let (handed_back, others) = pull_hand_backs_apart(under_usage_limit(80));
+fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions_are_taken(
+    #[case] resets_at: Option<Timestamp>,
+) {
+    let held = UsageLimitHeld { resets_at };
+    let (handed_back, others) = pull_hand_backs_apart(under_usage_limit(Some(held)));
 
     assert_eq!(others, sessionless_actions());
     assert!(matches!(
@@ -4167,8 +4175,8 @@ fn under_the_usage_limit_no_run_starts_and_no_issue_is_claimed_but_other_actions
 }
 
 #[test_log::test]
-fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
-    let starts: Vec<Action> = under_usage_limit(70)
+fn once_no_session_waits_for_the_usage_limit_every_run_starts_and_the_due_automation_runs() {
+    let starts: Vec<Action> = under_usage_limit(None)
         .into_iter()
         .filter(|a| {
             !sessionless_actions().contains(a)
@@ -4203,7 +4211,10 @@ fn with_auto_merge_a_green_pull_request_is_merged_under_the_usage_limit() {
         reconcile(
             &in_review(pr),
             &[],
-            &under_usage_limit_until(80),
+            &Memory {
+                usage_limit: Some(held_until(80)),
+                ..Memory::default()
+            },
             &Automations::default(),
             t(10),
             &merging_by(MergeMethod::Merge),
@@ -4347,34 +4358,17 @@ fn while_draining_a_green_pull_request_is_merged_still() {
 fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain_then_the_usage_limit() {
     let world = snapshot_of(vec![claimed(ticket(1))]);
     let mut memory = draining();
-    memory.hold_until(t(150));
+    memory.usage_limit = Some(held_until(150));
 
     assert_eq!(
         waits(&world, &[], &memory, 70, &policy()).remove(&Number(1)),
-        Some(vec![Wait::Drain, Wait::UsageLimit { resets_at: t(150) }])
+        Some(vec![
+            Wait::Drain,
+            Wait::UsageLimit {
+                resets_at: Some(t(150))
+            }
+        ])
     );
-}
-
-#[test_log::test]
-fn the_latest_usage_limit_reset_holds_starts_back() {
-    let mut memory = Memory::default();
-
-    assert!(memory.hold_until(t(80)));
-    assert!(!memory.hold_until(t(50)));
-    assert!(memory.holds_starts(t(70)));
-    assert!(memory.hold_until(t(90)));
-    assert!(memory.holds_starts(t(85)));
-}
-
-#[test_log::test]
-fn the_usage_limit_is_lifted_once_its_reset_passes() {
-    let mut memory = under_usage_limit_until(80);
-
-    assert_eq!(memory.lift_usage_limit(t(79)), None);
-    assert!(memory.holds_starts(t(79)));
-    assert_eq!(memory.lift_usage_limit(t(80)), Some(t(80)));
-    assert!(!memory.holds_starts(t(79)));
-    assert_eq!(memory.lift_usage_limit(t(81)), None);
 }
 
 fn waits(
@@ -4708,14 +4702,18 @@ fn the_decisions_say_a_run_waits_for_room_only_beyond_the_ceiling() {
 }
 
 #[test_log::test]
-fn under_the_usage_limit_work_waits_for_its_reset() {
+fn under_the_usage_limit_work_waits_for_it() {
     let world = snapshot_of(vec![claimed(ticket(1))]);
-    let mut memory = Memory::default();
-    memory.hold_until(t(150));
+    let memory = Memory {
+        usage_limit: Some(held_until(150)),
+        ..Memory::default()
+    };
 
     assert_eq!(
         waits(&world, &[], &memory, 10, &policy()).remove(&Number(1)),
-        Some(vec![Wait::UsageLimit { resets_at: t(150) }])
+        Some(vec![Wait::UsageLimit {
+            resets_at: Some(t(150))
+        }])
     );
 }
 
@@ -4727,7 +4725,7 @@ fn a_spec_change_is_taken_up_whatever_holds_the_runs_back() {
     world.merged = vec![merged(5, &["docs/spec.md"])];
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
     let usage_limit = Memory {
-        usage_limit: Some(UsageLimit { resets_at: t(70) }),
+        usage_limit: Some(held_until(70)),
         ..Memory::default()
     };
     let deciding = |live: &[LiveRun], memory: &Memory| {
@@ -5583,7 +5581,7 @@ fn while_awaiting_the_environment_work_waits_for_it() {
 fn the_drain_and_the_usage_limit_outrank_the_environment_and_the_environment_the_ceiling() {
     let world = snapshot_of(vec![claimed(ticket(1))]);
     let mut limited = awaiting_the_environment();
-    limited.hold_until(t(150));
+    limited.usage_limit = Some(held_until(150));
     let mut drained = limited.clone();
     drained.drain = Some(Drain { since: t(5) });
     let busy = [2, 3, 4, 5].map(|n| live(n, WorkKind::Implement));
@@ -5596,14 +5594,18 @@ fn the_drain_and_the_usage_limit_outrank_the_environment_and_the_environment_the
         wait_of(&[], &drained),
         Some(vec![
             Wait::Drain,
-            Wait::UsageLimit { resets_at: t(150) },
+            Wait::UsageLimit {
+                resets_at: Some(t(150))
+            },
             Wait::Environment
         ])
     );
     assert_eq!(
         wait_of(&[], &limited),
         Some(vec![
-            Wait::UsageLimit { resets_at: t(150) },
+            Wait::UsageLimit {
+                resets_at: Some(t(150))
+            },
             Wait::Environment
         ])
     );
