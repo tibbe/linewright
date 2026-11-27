@@ -12,7 +12,7 @@ use crate::domain::Timestamp;
 use crate::logs;
 use crate::runs::{Outcome, OutcomeName, Ran, Recorded, RunId, RunOf, StartedBy};
 use crate::transcript::lines::{self, Stamped, Verbosity};
-use crate::transcript::{End, Session};
+use crate::transcript::{Session, Working};
 
 /// A run as its screen shows it, with the names `runs` and `logs` give the
 /// same facts: its heading, its sessions with their settings, and its
@@ -67,15 +67,15 @@ pub struct SessionScreen {
     /// Its number in the run, from 1.
     pub session: usize,
     pub started_at: Option<Timestamp>,
-    /// How long it has run, leaving out its waits for the usage limit to
-    /// reset; `None` where when it started is not known.
+    /// How long it has run, leaving out its waits for the usage limit;
+    /// `None` where when it started is not known.
     pub duration_seconds: Option<f64>,
     /// `None` for a session recorded before Linewright kept it.
     #[serde(flatten)]
     pub ran: Option<Ran>,
-    /// While it waits for the usage limit to reset, until when.
+    /// While it waits for the usage limit, in its turn or between turns.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub usage_limit_resets_at: Option<Timestamp>,
+    pub usage_limit: Option<UsageLimitWaitScreen>,
     /// While a turn goes on, how long it has gone on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_seconds: Option<f64>,
@@ -85,20 +85,32 @@ impl SessionScreen {
     /// The `n`th session, from 1, as `session` holds its transcript, which
     /// ran with `ran`, as of `now`.
     fn of(n: usize, session: &Session, ran: Option<Ran>, now: Timestamp) -> SessionScreen {
-        let idle = session.end == End::Going && !session.runs_an_entry();
-        let waiting = session.waiting().filter(|_| idle);
+        let working = session.working();
         SessionScreen {
             session: n,
             started_at: session.started_at,
             duration_seconds: session.lasted_so_far().map(|lasted| lasted.seconds(now)),
             ran,
-            usage_limit_resets_at: waiting.and_then(|wait| wait.until),
-            working_seconds: (idle && waiting.is_none())
-                .then(|| session.turn_so_far())
-                .flatten()
-                .map(|lasted| lasted.seconds(now)),
+            usage_limit: match working {
+                Some(Working::Waiting { until, .. }) => {
+                    Some(UsageLimitWaitScreen { resets_at: until })
+                }
+                Some(Working::Working(_)) | None => None,
+            },
+            working_seconds: match working {
+                Some(Working::Working(lasted)) => Some(lasted.seconds(now)),
+                Some(Working::Waiting { .. }) | None => None,
+            },
         }
     }
+}
+
+/// A session's wait for the usage limit under way
+/// (`docs/specs/components.md`, Transcript, Working).
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct UsageLimitWaitScreen {
+    /// The reset time the harness stated last; `None` where it stated none.
+    pub resets_at: Option<Timestamp>,
 }
 
 impl RunHeading {

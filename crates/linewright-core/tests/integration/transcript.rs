@@ -3,7 +3,7 @@ use linewright_core::runs::{RunId, Started, StartedBy};
 use linewright_core::testing::{json_objects, output_of};
 use linewright_core::transcript::{
     self, After, End, EntryAt, Follower, Lasted, MaintenanceRecord, MaintenanceStatus, Place,
-    SessionLasted, SessionRecord, Transcript, Verbosity, Wait, Written,
+    SessionLasted, SessionRecord, Transcript, Verbosity, Wait, WaitPlace, Written,
 };
 use serde_json::json;
 
@@ -1793,34 +1793,46 @@ fn the_clone_and_the_maintenance_command_last_until_they_end_or_their_session_do
     );
 }
 
-/// `docs/specs/runs.md`, Run, A session's heading and
-/// Working.
+/// `docs/specs/runs.md`, Run, A session's heading.
 #[test_log::test]
-fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
-    let line = |event: String| -> serde_json::Value { serde_json::from_str(&event).unwrap() };
-    let turn_ended = line(transcript::turn_ended_marker(time("2026-10-13T10:00:04Z")));
-    let waited = calling(&[
-        turn_ended.clone(),
-        line(transcript::usage_limit_waiting(
-            time("2026-10-13T10:00:05Z"),
-            Some(time("2026-10-13T12:00:00Z")),
-        )),
-        line(transcript::usage_limit_waited(time("2026-10-13T12:00:01Z"))),
-        line(transcript::usage_limit_waiting(
-            time("2026-10-13T12:00:30Z"),
-            None,
-        )),
-        session_ended("2026-10-13T12:01:00Z"),
-    ]);
-
+fn a_session_goes_on_until_it_ends_at_the_time_its_record_gives_if_any() {
     let going = transcript::parse(&calling(&[]), Written::SoFar);
     let not_known = transcript::parse(&calling(&[]), Written::Whole);
-    let ended = transcript::parse(&waited, Written::Whole);
+    let ended = transcript::parse(
+        &calling(&[session_ended("2026-10-13T12:01:00Z")]),
+        Written::Whole,
+    );
 
     assert_eq!(going.end, End::Going);
     assert_eq!(going.waits, []);
     assert_eq!(not_known.end, End::NotKnown);
     assert_eq!(ended.end, End::At(time("2026-10-13T12:01:00Z")));
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit, and
+/// Run, A session's heading.
+#[test_log::test]
+fn a_wait_after_a_turn_the_harness_ended_comes_before_its_follow_up() {
+    let follow_up = json!({"type": "linewright-turn", "started_at": "2026-10-13T12:00:01Z", "started_by": "follow-up"});
+    let mut waited = calling(&[
+        returned("2026-10-13T10:00:03Z", &json!({})),
+        turn_ended("2026-10-13T10:00:04Z"),
+        waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z"),
+        waited("2026-10-13T12:00:01Z"),
+        follow_up,
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-13T12:00:06Z",
+            "message": {"content": [{"type": "text", "text": "Done."}]},
+        }),
+        turn_ended("2026-10-13T12:00:07Z"),
+        waiting_with_no_reset("2026-10-13T12:00:30Z"),
+        session_ended("2026-10-13T12:01:00Z"),
+    ]);
+    waited.followups = vec!["The usage limit has reset.\n".into()];
+
+    let ended = transcript::parse(&waited, Written::Whole);
+
     assert_eq!(
         ended.waits,
         [
@@ -1828,25 +1840,42 @@ fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
                 at: time("2026-10-13T10:00:05Z"),
                 until: Some(time("2026-10-13T12:00:00Z")),
                 end: End::At(time("2026-10-13T12:00:01Z")),
+                place: WaitPlace::AfterTurn(0),
             },
             Wait {
                 at: time("2026-10-13T12:00:30Z"),
                 until: None,
                 end: End::At(time("2026-10-13T12:01:00Z")),
+                place: WaitPlace::AfterTurn(1),
             },
         ]
     );
     assert_eq!(
-        transcript::render(&of(&[waited]), Verbosity::Full, false),
+        ended.lasted_so_far(),
+        Some(SessionLasted::Held { seconds: 34.0 }),
+        "10:00:00 to 12:01:00, but for the waits of 1h 59m 56s and 30s"
+    );
+    assert_eq!(
         transcript::render(
-            &of(&[calling(&[
-                turn_ended,
-                session_ended("2026-10-13T12:01:00Z")
-            ])]),
-            Verbosity::Full,
+            &of(std::slice::from_ref(&waited)),
+            Verbosity::Compact,
             false
         ),
-        "a wait shows no line"
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Bash(cargo test) → exit 0, 1 line\n \
+         0:04  worked for 3s\n \
+         0:05  waited for the usage limit, 1h 59m\n\
+         2:00:01  follow-up: The usage limit has reset.\n\
+         2:00:06  Done.\n\
+         2:00:07  worked for 5s\n\
+         2:00:30  waited for the usage limit, 30s\n"
+    );
+    assert!(
+        json_objects(&transcript::json_lines(&of(&[waited]), Verbosity::Full))
+            .iter()
+            .all(|line| line["type"] != "waited"),
+        "a wait is Linewright's, as a turn's length is"
     );
 }
 
@@ -1870,6 +1899,7 @@ fn an_old_records_wait_reads_with_its_reset_time() {
             at: time("2026-10-13T10:00:05Z"),
             until: Some(time("2026-10-13T12:00:00Z")),
             end: End::At(time("2026-10-13T12:00:01Z")),
+            place: WaitPlace::AfterTurn(0),
         }]
     );
 }
@@ -1880,6 +1910,12 @@ fn waiting(at: &str, until: &str) -> serde_json::Value {
         Some(time(until)),
     ))
     .unwrap()
+}
+
+/// The line that says the session started at `at` to wait for the usage
+/// limit, with no reset time.
+fn waiting_with_no_reset(at: &str) -> serde_json::Value {
+    serde_json::from_str(&transcript::usage_limit_waiting(time(at), None)).unwrap()
 }
 
 fn waited(at: &str) -> serde_json::Value {
@@ -2334,6 +2370,11 @@ fn a_turn_goes_on_from_its_prompt_until_it_ends() {
         })
     );
     assert_eq!(so_far(&[turn_ended("2026-10-13T10:00:07Z")]), None);
+    assert_eq!(
+        so_far(&[waiting_with_no_reset("2026-10-13T10:00:05Z")]),
+        Some(SessionLasted::Held { seconds: 5.0 }),
+        "it holds still while it waits in the turn"
+    );
 }
 
 /// `docs/specs/runs.md`, Transcripts, Followed.
@@ -2427,4 +2468,300 @@ fn a_thought_whose_thinking_says_no_time_has_no_duration() {
         transcript::parse(&record, Written::SoFar).lasted(&thought),
         Some(Lasted::Took { seconds: None })
     );
+}
+
+/// A session whose call `t1` returns at 10:00:03, then thinks, waiting for
+/// the usage limit from 10:00:04 to 11:00:04 with `waits` in between, until
+/// 11:00:10, answers at 11:00:11 and ends its turn at 11:00:12.
+fn waiting_in_a_thought(waits: &[serde_json::Value]) -> SessionRecord {
+    let mut events = vec![
+        returned("2026-10-13T10:00:03Z", &json!({})),
+        thinking_tokens(),
+    ];
+    events.extend_from_slice(waits);
+    events.extend([
+        waited("2026-10-13T11:00:04Z"),
+        thinking("2026-10-13T11:00:10Z", "Next.", None),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-13T11:00:11Z",
+            "message": {"content": [{"type": "text", "text": "Done."}]},
+        }),
+        turn_ended("2026-10-13T11:00:12Z"),
+    ]);
+    calling(&events)
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit, and
+/// Usage limit, The reset time.
+#[test_log::test]
+fn a_wait_inside_a_thought_comes_before_it_with_the_reset_time_stated_last_and_its_times_leave_it_out()
+ {
+    let restated = waiting_in_a_thought(&[
+        waiting("2026-10-13T10:00:04Z", "2026-10-13T12:00:00Z"),
+        waiting("2026-10-13T10:30:04Z", "2026-10-13T12:30:00Z"),
+    ]);
+    let thought = EntryAt {
+        turn: 0,
+        path: vec![1],
+    };
+
+    let session = transcript::parse(&restated, Written::Whole);
+
+    assert_eq!(
+        session.waits,
+        [Wait {
+            at: time("2026-10-13T10:00:04Z"),
+            until: Some(time("2026-10-13T12:30:00Z")),
+            end: End::At(time("2026-10-13T11:00:04Z")),
+            place: WaitPlace::Before(thought.clone()),
+        }]
+    );
+    assert_eq!(session.turns.len(), 1, "the wait does not end the turn");
+    let stated_none_again = waiting_in_a_thought(&[
+        waiting("2026-10-13T10:00:04Z", "2026-10-13T12:00:00Z"),
+        waiting_with_no_reset("2026-10-13T10:30:04Z"),
+    ]);
+    assert_eq!(
+        transcript::parse(&stated_none_again, Written::Whole).waits[0].until,
+        Some(time("2026-10-13T12:00:00Z")),
+        "a line that states no reset time leaves the one stated last"
+    );
+    assert_eq!(
+        session.lasted(&Place::Entry(thought)),
+        Some(Lasted::Took { seconds: Some(7.0) }),
+        "10:00:03 to 11:00:10, but for the hour waited"
+    );
+    assert_eq!(
+        session.worked_for(0),
+        Some(Lasted::Took {
+            seconds: Some(11.0)
+        })
+    );
+    assert_eq!(
+        transcript::render(&of(&[restated]), Verbosity::Compact, false),
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Bash(cargo test) → exit 0, 1 line\n \
+         0:04  waited for the usage limit, 1h\n\
+         1:00:10  thought, 7s\n\
+         1:00:11  Done.\n\
+         1:00:12  worked for 11s\n"
+    );
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit and
+/// Running, and Usage limit, No reset time.
+#[test_log::test]
+fn a_call_a_wait_falls_inside_runs_but_for_the_wait_and_holds_still_while_it_goes_on() {
+    let waiting = [waiting_with_no_reset("2026-10-13T10:00:03Z")];
+    let after = [
+        waiting_with_no_reset("2026-10-13T10:00:03Z"),
+        waited("2026-10-13T10:10:03Z"),
+    ];
+    let returned_after = [
+        waiting_with_no_reset("2026-10-13T10:00:03Z"),
+        waited("2026-10-13T10:10:03Z"),
+        returned("2026-10-13T10:10:05Z", &json!({})),
+        thinking_tokens(),
+        thinking("2026-10-13T10:10:08Z", "", None),
+        turn_ended("2026-10-13T10:10:09Z"),
+    ];
+
+    assert_eq!(
+        call_lasted(&calling(&waiting), Written::SoFar),
+        Some(Lasted::Paused { seconds: 1.0 })
+    );
+    assert_eq!(
+        call_lasted(&calling(&after), Written::SoFar),
+        Some(Lasted::Running {
+            since: Some(time("2026-10-13T10:10:02Z"))
+        }),
+        "its start moved on by the 10m waited"
+    );
+    assert_eq!(
+        call_lasted(&calling(&returned_after), Written::Whole),
+        Some(Lasted::Took { seconds: Some(3.0) })
+    );
+    let session = transcript::parse(&calling(&returned_after), Written::Whole);
+    assert_eq!(
+        session.waits[0].place,
+        WaitPlace::Before(EntryAt {
+            turn: 0,
+            path: vec![1]
+        }),
+        "the first step after the wait"
+    );
+    assert_eq!(
+        transcript::render(&of(&[calling(&returned_after)]), Verbosity::Compact, false),
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Bash(cargo test) → exit 0, 1 line\n \
+         0:03  waited for the usage limit, 10m\n\
+         10:08  thought, 3s\n\
+         10:09  worked for 8s\n"
+    );
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit and
+/// Thinking.
+#[test_log::test]
+fn a_wait_in_a_sub_agents_work_comes_before_its_step_under_the_call_that_started_it() {
+    let record = SessionRecord {
+        output: output_of(&[
+            json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-13T10:00:02Z",
+                "message": {"content": [
+                    {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "Review"}},
+                ]},
+            }),
+            waiting("2026-10-13T10:00:04Z", "2026-10-13T11:00:00Z"),
+            waited("2026-10-13T10:30:04Z"),
+            thinking("2026-10-13T10:30:06Z", "Small.", Some("a1")),
+            json!({"type": "user", "timestamp": "2026-10-13T10:30:10Z", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "a1", "content": "Clean."},
+            ]}}),
+            turn_ended("2026-10-13T10:30:11Z"),
+        ]),
+        ..SessionRecord::default()
+    };
+
+    let session = transcript::parse(&record, Written::Whole);
+
+    assert_eq!(
+        session.waits[0].place,
+        WaitPlace::Before(EntryAt {
+            turn: 0,
+            path: vec![0, 0]
+        })
+    );
+    assert_eq!(
+        session.lasted(&Place::Entry(EntryAt {
+            turn: 0,
+            path: vec![0]
+        })),
+        Some(Lasted::Took { seconds: Some(8.0) }),
+        "10:00:02 to 10:30:10, but for the 30m waited"
+    );
+    assert_eq!(
+        transcript::render(&of(&[record]), Verbosity::Compact, false),
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Agent(Review) → Clean.\n \
+         0:04    waited for the usage limit, 30m\n\
+         30:06    thought, 4s\n\
+         30:11  worked for 10s\n"
+    );
+}
+
+/// `docs/specs/runs.md`, Transcripts, Waits for the usage limit: a record
+/// kept before turns' ends were marked, whose wait came inside the turn the
+/// harness ended.
+#[test_log::test]
+fn a_wait_recorded_before_turns_ends_were_marked_comes_after_the_turn_the_harness_ended() {
+    let mut record = calling(&[
+        returned("2026-10-13T10:00:03Z", &json!({})),
+        thinking_tokens(),
+        json!({"type": "result", "subtype": "success", "is_error": true, "result": "limit"}),
+        waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z"),
+        waited("2026-10-13T12:00:00Z"),
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T12:00:00Z", "started_by": "follow-up"}),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-13T12:00:03Z",
+            "message": {"content": [{"type": "text", "text": "Done."}]},
+        }),
+        session_ended("2026-10-13T12:00:04Z"),
+    ]);
+    record.followups = vec!["The usage limit has reset.\n".into()];
+
+    let session = transcript::parse(&record, Written::Whole);
+
+    assert_eq!(session.waits[0].until, Some(time("2026-10-13T12:00:00Z")));
+    assert_eq!(session.waits[0].place, WaitPlace::AfterTurn(0));
+    assert_eq!(
+        transcript::render(&of(&[record]), Verbosity::Compact, false),
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:02  Bash(cargo test) → exit 0, 1 line\n \
+         0:03  thought, interrupted\n \
+         0:03  worked for 3s\n \
+         0:05  waited for the usage limit, 1h 59m\n\
+         2:00:00  follow-up: The usage limit has reset.\n\
+         2:00:03  Done.\n\
+         2:00:04  worked for 4s, interrupted\n"
+    );
+}
+
+/// `docs/specs/runs.md`, Transcripts, Followed.
+#[test_log::test]
+fn following_shows_each_wait_once_it_has_ended_where_logs_shows_it() {
+    let answered_after_a_block = json!({
+        "type": "assistant",
+        "timestamp": "2026-10-13T11:00:06Z",
+        "message": {"content": [
+            {"type": "server_tool_use", "id": "s1"},
+            {"type": "text", "text": "After."},
+        ]},
+    });
+    let records = [
+        waiting_in_a_thought(&[waiting("2026-10-13T10:00:04Z", "2026-10-13T12:00:00Z")]),
+        calling(&[
+            returned("2026-10-13T10:00:03Z", &json!({})),
+            turn_ended("2026-10-13T10:00:04Z"),
+            waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z"),
+            waited("2026-10-13T12:00:01Z"),
+        ]),
+        calling(&[
+            returned("2026-10-13T10:00:03Z", &json!({})),
+            waiting_with_no_reset("2026-10-13T10:00:04Z"),
+            session_ended("2026-10-13T10:30:00Z"),
+        ]),
+        calling(&[
+            returned("2026-10-13T10:00:03Z", &json!({})),
+            waiting_with_no_reset("2026-10-13T10:00:04Z"),
+            waited("2026-10-13T11:00:04Z"),
+            answered_after_a_block,
+        ]),
+        calling(&[
+            returned("2026-10-13T10:00:03Z", &json!({})),
+            thinking_tokens(),
+            waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z"),
+            waited("2026-10-13T12:00:00Z"),
+            json!({"type": "linewright-turn", "started_at": "2026-10-13T12:00:00Z", "started_by": "follow-up"}),
+        ]),
+    ];
+
+    for (record, verbosity) in records.into_iter().flat_map(|record| {
+        [
+            (record.clone(), Verbosity::Compact),
+            (record, Verbosity::Full),
+        ]
+    }) {
+        let mut follower = Follower::new(
+            item_run("105/implement-1".parse().unwrap()),
+            verbosity,
+            None,
+        );
+        let mut followed = String::new();
+        for (end, _) in record.output.match_indices('\n') {
+            followed += &text(&follower.update(&[written(&record, end + 1)]));
+        }
+        followed += &text(&follower.end(std::slice::from_ref(&record)));
+        let but_the_call = |shown: &str| -> Vec<String> {
+            shown
+                .lines()
+                .filter(|line| !line.contains("Bash(cargo test)") && !line.starts_with("       "))
+                .map(str::to_string)
+                .collect()
+        };
+
+        assert_eq!(
+            but_the_call(&followed),
+            but_the_call(&transcript::render(&of(&[record]), verbosity, false)),
+            "followed, each wait shows where logs shows it"
+        );
+    }
 }

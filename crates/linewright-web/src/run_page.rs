@@ -26,11 +26,11 @@ use linewright_core::domain::Timestamp;
 use linewright_core::logs::{KeptRuns, LogsError, RunRecords, Which};
 use linewright_core::phrase::Status;
 use linewright_core::runs::{self, Ran, RunId, RunOf};
-use linewright_core::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
+use linewright_core::transcript::lines::{THOUGHT, WAITED, WORKED_FOR, cut_short};
 use linewright_core::transcript::{
-    self, After, Call, Change, Changed, CloneEnded, Course, End, EntryAt, Feed, INTERRUPTED,
-    Lasted, Layout, Made, Maintenance, MaintenanceEnded, Numbering, Place, Prompt, RUNNING,
-    Session, Thought, What, whole_seconds,
+    self, After, Call, Change, Changed, CloneEnded, Course, EntryAt, Feed, INTERRUPTED, Lasted,
+    Layout, Made, Maintenance, MaintenanceEnded, Numbering, Place, Prompt, RUNNING, Session,
+    Thought, WaitPlace, WaitsShown, What, Working, whole_seconds,
 };
 
 use super::buttons::{ScreenButton, Verb};
@@ -50,6 +50,8 @@ use super::{
 enum Patch {
     /// `html` added at the end of the element `into`.
     Append { into: String, html: String },
+    /// `html` added just before the element `id`.
+    Before { id: String, html: String },
     /// `html` in place of the element `id`.
     Replace { id: String, html: String },
 }
@@ -61,6 +63,11 @@ impl Patch {
             Patch::Append { into, html } => {
                 format!(
                     r##"<hx-partial hx-target="#{into}" hx-swap="beforeend">{html}</hx-partial>"##
+                )
+            }
+            Patch::Before { id, html } => {
+                format!(
+                    r##"<hx-partial hx-target="#{id}" hx-swap="beforebegin">{html}</hx-partial>"##
                 )
             }
             Patch::Replace { id, html } => {
@@ -97,6 +104,8 @@ struct SessionView {
     /// Its working step as the page shows it: the list that holds it, empty
     /// of any step while it shows none.
     working: String,
+    /// Its waits for the usage limit shown so far.
+    waits: WaitsShown,
 }
 
 struct EntryView {
@@ -114,6 +123,8 @@ enum Of {
     Entry(EntryAt),
     /// How long its `n`th turn took, once it has ended.
     WorkedFor(usize),
+    /// Its `k`th wait for the usage limit, once it has ended.
+    Wait(usize),
 }
 
 impl Of {
@@ -122,7 +133,7 @@ impl Of {
         match self {
             Of::Clone => Some(Place::Clone),
             Of::Maintenance => Some(Place::Maintenance),
-            Of::Prompt(_) | Of::WorkedFor(_) => None,
+            Of::Prompt(_) | Of::WorkedFor(_) | Of::Wait(_) => None,
             Of::Entry(at) => Some(Place::Entry(at.clone())),
         }
     }
@@ -142,6 +153,8 @@ enum Kind<'a> {
     Tool(&'a Call),
     /// The end of its `n`th turn.
     WorkedFor(usize),
+    /// A wait for the usage limit that has ended.
+    Waited,
 }
 
 impl RunView {
@@ -172,6 +185,7 @@ impl RunView {
                 at: HashMap::new(),
                 verbose: self.verbose,
                 working: working_html(read.session, model),
+                waits: WaitsShown::default(),
             });
             let added = self.sessions.last().expect("just pushed");
             return vec![Patch::Append {
@@ -246,11 +260,17 @@ impl SessionView {
     /// entries it changes, then its heading and its working step where
     /// those change.
     fn change(&mut self, change: Change, model: &Session) -> Vec<Patch> {
-        let heading_changes = matches!(
-            change,
-            Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded
-        );
-        let mut patches = self.entries_change(change, model);
+        let wait_changes = matches!(change, Change::WaitBegan(_) | Change::WaitEnded(_));
+        let heading_changes = wait_changes || change == Change::SessionEnded;
+        let before = self.waits.before(&change, model);
+        let mut patches = self.show_waits(before, model);
+        let after = change.clone();
+        patches.extend(self.entries_change(change, model));
+        let after = self.waits.after(&after, model);
+        patches.extend(self.show_waits(after, model));
+        if wait_changes {
+            patches.extend(self.running_redrawn(model));
+        }
         if heading_changes {
             patches.push(Patch::Replace {
                 id: format!("s{}-heading", self.number),
@@ -272,9 +292,11 @@ impl SessionView {
     /// as `model`, changes of its entries.
     fn entries_change(&mut self, change: Change, model: &Session) -> Vec<Patch> {
         match change {
-            Change::Opened | Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded => {
-                vec![]
-            }
+            Change::Opened
+            | Change::WaitBegan(_)
+            | Change::WaitRestated(_)
+            | Change::WaitEnded(_)
+            | Change::SessionEnded => vec![],
             Change::Turn(turn) => {
                 if matches!(model.turns[turn].prompt, Prompt::Brief(None)) {
                     return vec![];
@@ -307,6 +329,98 @@ impl SessionView {
                 self.drawn(model).account_patches(i, call)
             }
         }
+    }
+
+    /// Adds an entry for each of its waits `waits`, by their number from 0,
+    /// at its place, giving what it changes on the page.
+    fn show_waits(&mut self, waits: Vec<usize>, model: &Session) -> Vec<Patch> {
+        let mut patches = vec![];
+        for k in waits {
+            let (parent, next) = match &model.waits[k].place {
+                WaitPlace::Before(at) => (
+                    at.parent().and_then(|parent| self.at.get(&parent).copied()),
+                    self.at.get(at).copied(),
+                ),
+                WaitPlace::InTurn(_) | WaitPlace::AfterTurn(_) => (None, None),
+            };
+            match next {
+                None => patches.extend(self.add(Of::Wait(k), parent, model)),
+                Some(next) => patches.extend(self.insert_before(Of::Wait(k), next, parent, model)),
+            }
+        }
+        patches
+    }
+
+    /// Adds an entry that shows `of` just before the entry `next`, which
+    /// the page shows under the call `parent`, if any, giving what it
+    /// changes on the page.
+    fn insert_before(
+        &mut self,
+        of: Of,
+        next: usize,
+        parent: Option<usize>,
+        model: &Session,
+    ) -> Vec<Patch> {
+        let i = self.entries.len();
+        self.entries.push(EntryView {
+            of,
+            children: vec![],
+        });
+        let list = match parent {
+            Some(parent) => &mut self.entries[parent].children,
+            None => &mut self.own,
+        };
+        let position = list
+            .iter()
+            .position(|&j| j == next)
+            .expect("an entry shown is in its list");
+        list.insert(position, i);
+        let drawn = self.drawn(model);
+        let Some(html) = drawn.entry_html(i) else {
+            return vec![];
+        };
+        let mut patches = vec![Patch::Before {
+            id: drawn.entry_id(next),
+            html,
+        }];
+        if let Some(parent) = parent
+            && let Some(Kind::Tool(call)) = drawn.kind(parent)
+        {
+            patches.push(Patch::Replace {
+                id: format!("{}-line", drawn.entry_id(parent)),
+                html: drawn.call_line_html(parent, call),
+            });
+        }
+        patches
+    }
+
+    /// The patches that draw each entry that runs again, with how long it
+    /// has run.
+    fn running_redrawn(&self, model: &Session) -> Vec<Patch> {
+        let drawn = self.drawn(model);
+        (0..self.entries.len())
+            .filter_map(|i| match drawn.kind(i)? {
+                Kind::Tool(call) if call.end == Course::Running => Some(Patch::Replace {
+                    id: format!("{}-line", drawn.entry_id(i)),
+                    html: drawn.call_line_html(i, call),
+                }),
+                Kind::Clone(Course::Running) => self.again(Some(i), model).pop(),
+                Kind::Maintenance(maintenance)
+                    if matches!(maintenance.course(), Course::Running) =>
+                {
+                    self.again(Some(i), model).pop()
+                }
+                Kind::Tool(_)
+                | Kind::Clone(_)
+                | Kind::Maintenance(_)
+                | Kind::Brief(_)
+                | Kind::FollowUp(_)
+                | Kind::Message(_)
+                | Kind::Thought(_)
+                | Kind::WorkedFor(_)
+                | Kind::Waited => None,
+            })
+            .collect()
     }
 
     /// Its entries, drawn from its transcript as `model` holds it.
@@ -385,40 +499,35 @@ impl SessionView {
     }
 }
 
-/// The session `n`'s working step, as `model` holds its transcript: while it
-/// goes on with no entry running, while it waits for the usage limit, a
-/// step that says so and until when, or else while a turn goes on, one that
-/// says "working" and how long the turn has gone on so far
-/// (`docs/specs/runs.md`, Run, Working).
+/// The session `n`'s working step, as `model` holds its transcript, while
+/// it goes on: while it waits for the usage limit, in a turn or between
+/// turns, a step that says so and until the reset time stated last, if any;
+/// or else while a turn goes on with no entry running, one that says
+/// "working". Each says how long the turn has gone on so far or, between
+/// turns, how long since the last entry (`docs/specs/components.md`,
+/// Transcript, Working).
 fn working_html(n: usize, model: &Session) -> String {
-    let step = (model.end == End::Going && !model.runs_an_entry())
-        .then(|| {
-            let (text, lasted) = match model.waiting() {
-                Some(wait) => (
-                    match wait.until {
-                        Some(until) => {
-                            format!("waiting for the usage limit, until {}", html::time(until))
-                        }
-                        None => "waiting for the usage limit".to_string(),
-                    },
-                    model
-                        .last_at()
-                        .or(model.started_at)
-                        .map(|from| Lasted::from(model.lasted_from(from))),
-                ),
-                None => (WORKING.to_string(), Some(model.turn_so_far()?.into())),
-            };
-            let row = entry_row(&Row {
-                id: Some(&format!("s{n}-step")),
-                text,
-                lasted,
-                fold: None,
-            });
-            Some(format!(
-                r#"<li class="entry working py-px" id="s{n}-step">{row}</li>"#
-            ))
-        })
-        .flatten();
+    let step = model.working().map(|working| {
+        let (text, lasted) = match working {
+            Working::Waiting { until, lasted } => (
+                match until {
+                    Some(until) => {
+                        format!("waiting for the usage limit, until {}", html::time(until))
+                    }
+                    None => "waiting for the usage limit".to_string(),
+                },
+                lasted.map(Lasted::from),
+            ),
+            Working::Working(lasted) => (WORKING.to_string(), Some(lasted.into())),
+        };
+        let row = entry_row(&Row {
+            id: Some(&format!("s{n}-step")),
+            text,
+            lasted,
+            fold: None,
+        });
+        format!(r#"<li class="entry working py-px" id="s{n}-step">{row}</li>"#)
+    });
     format!(
         r#"<ol class="entries font-mono text-sm" id="s{n}-working">{}</ol>"#,
         step.unwrap_or_default()
@@ -570,7 +679,8 @@ fn duration_html(lasted: Option<Lasted>) -> String {
         }
         | Lasted::Interrupted {
             seconds: Some(seconds),
-        } => (whole_seconds(seconds), None),
+        }
+        | Lasted::Paused { seconds } => (whole_seconds(seconds), None),
         Lasted::Running { since: None }
         | Lasted::Took { seconds: None }
         | Lasted::Interrupted { seconds: None } => return String::new(),
@@ -691,6 +801,7 @@ impl Drawn<'_> {
                 }
             },
             Of::WorkedFor(turn) => Kind::WorkedFor(*turn),
+            Of::Wait(_) => Kind::Waited,
         };
         Some(kind)
     }
@@ -700,6 +811,9 @@ impl Drawn<'_> {
     fn lasted(&self, i: usize) -> Option<Lasted> {
         match &self.session.entries[i].of {
             Of::WorkedFor(turn) => self.model.worked_for(*turn),
+            Of::Wait(k) => Some(Lasted::Took {
+                seconds: self.model.waits[*k].seconds(),
+            }),
             of @ (Of::Clone | Of::Maintenance | Of::Prompt(_) | Of::Entry(_)) => {
                 of.place().and_then(|place| self.model.lasted(&place))
             }
@@ -789,6 +903,7 @@ impl Drawn<'_> {
                 let interrupted = self.model.turns[turn].end == Course::Interrupted;
                 ("worked-for", row(cut_short(WORKED_FOR, interrupted), None))
             }
+            Kind::Waited => ("waited", row(WAITED.to_string(), None)),
             Kind::Brief(text) => ("brief", self.prompt_row(&id, "brief", text)),
             Kind::FollowUp(text) => (
                 "follow-up",

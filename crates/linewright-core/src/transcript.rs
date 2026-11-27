@@ -181,9 +181,15 @@ pub const INTERRUPTED: &str = "interrupted";
 /// Running), each where the times it is told from are known.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Lasted {
-    /// It still runs, since `since`.
+    /// It still runs, as long as since `since`: its start moved on by how
+    /// long its session waited for the usage limit since.
     Running {
         since: Option<Timestamp>,
+    },
+    /// It still runs, but holds still while its session waits for the usage
+    /// limit, having run `seconds`.
+    Paused {
+        seconds: f64,
     },
     Took {
         seconds: Option<f64>,
@@ -192,21 +198,6 @@ pub enum Lasted {
     Interrupted {
         seconds: Option<f64>,
     },
-}
-
-impl Lasted {
-    /// How long something that started `start` and ended `end` lasted,
-    /// where both are known, and whether it was `cut_short`.
-    fn ended(start: Option<Timestamp>, end: Option<Timestamp>, cut_short: bool) -> Lasted {
-        let seconds = start
-            .zip(end)
-            .map(|(start, end)| seconds_between(start, end));
-        if cut_short {
-            Lasted::Interrupted { seconds }
-        } else {
-            Lasted::Took { seconds }
-        }
-    }
 }
 
 /// What an entry's line says of how it went, leaving out how long it ran,
@@ -359,11 +350,13 @@ pub fn clone_ended(at: Timestamp, duration_seconds: f64, error: Option<&str>) ->
     .expect("a clone event serializes")
 }
 
-/// The lines Linewright writes to [`OUTPUT`] as the session waits out the
+/// The lines Linewright writes to [`OUTPUT`] as the session waits for the
 /// usage limit and as its work stops.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "type")]
 enum SessionEvent {
+    /// A wait began `at` or, while one goes on, its reset time was stated
+    /// again.
     #[serde(rename = "linewright-usage-limit")]
     Waiting {
         at: Timestamp,
@@ -381,8 +374,9 @@ pub fn session_ended(at: Timestamp) -> String {
     serde_json::to_string(&SessionEvent::Ended { at }).expect("a session event serializes")
 }
 
-/// The line that says the session waits for the usage limit `at`, `until`
-/// then where a reset time is known.
+/// The line that says the session started `at` to wait for the usage limit,
+/// `until` the reset time the harness stated, if it stated one. Written
+/// while a wait goes on, it states that wait's reset time again.
 pub fn usage_limit_waiting(at: Timestamp, until: Option<Timestamp>) -> String {
     serde_json::to_string(&SessionEvent::Waiting { at, until }).expect("a session event serializes")
 }
@@ -541,7 +535,7 @@ pub struct Session {
     pub turns: Vec<Turn>,
     #[serde(default)]
     pub end: End,
-    /// Its waits for the usage limit to reset, in order.
+    /// Its waits for the usage limit, in order.
     #[serde(default)]
     pub waits: Vec<Wait>,
 }
@@ -567,13 +561,80 @@ impl End {
     }
 }
 
-/// A session's wait for the usage limit to reset.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A session's wait for the usage limit (`docs/specs/runs.md`, Usage limit).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wait {
     pub at: Timestamp,
-    /// When it was to end, where a reset time was stated.
+    /// The reset time the harness stated last, if it stated any.
     pub until: Option<Timestamp>,
     pub end: End,
+    pub place: WaitPlace,
+}
+
+/// Where a wait for the usage limit is among its session's entries
+/// (`docs/specs/runs.md`, Transcripts, Waits for the usage limit).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WaitPlace {
+    /// Before the step that waited: the first message, thought or tool
+    /// call its turn added after the wait began.
+    Before(EntryAt),
+    /// In its `n`th turn, from 0, which has added no step since the wait
+    /// began.
+    InTurn(usize),
+    /// After its `n`th turn, from 0, and before the next.
+    AfterTurn(usize),
+}
+
+impl Wait {
+    /// How long it lasted, in seconds, where when it ended is known.
+    pub fn seconds(&self) -> Option<f64> {
+        self.end.at().map(|end| seconds_between(self.at, end))
+    }
+
+    /// Whether its entry shows: once it has ended, at a place known.
+    fn shows(&self) -> bool {
+        self.end != End::Going && !matches!(self.place, WaitPlace::InTurn(_))
+    }
+}
+
+/// Which of a followed session's waits for the usage limit show, as each
+/// change to its transcript is laid out: each, once it has ended, as its
+/// place is reached, just before the entry it comes before or just after
+/// its turn's end, or else as it ends, where its place was reached first.
+#[derive(Default)]
+pub struct WaitsShown {
+    shown: usize,
+    reached: std::collections::HashSet<WaitPlace>,
+}
+
+impl WaitsShown {
+    /// The waits of `session`, by their number from 0, that show just
+    /// before what `change` adds, which its line left as `session`.
+    pub fn before(&mut self, change: &Change, session: &Session) -> Vec<usize> {
+        if let Change::Added(Place::Entry(at)) = change {
+            self.reached.insert(WaitPlace::Before(at.clone()));
+        }
+        self.next(session)
+    }
+
+    /// The waits of `session`, by their number from 0, that show just
+    /// after what `change` adds.
+    pub fn after(&mut self, change: &Change, session: &Session) -> Vec<usize> {
+        if let Change::TurnEnded(n) = change {
+            self.reached.insert(WaitPlace::AfterTurn(*n));
+        }
+        self.next(session)
+    }
+
+    fn next(&mut self, session: &Session) -> Vec<usize> {
+        let from = self.shown;
+        self.shown += session.waits[from..]
+            .iter()
+            .take_while(|wait| wait.shows() && self.reached.contains(&wait.place))
+            .count();
+        (from..self.shown).collect()
+    }
 }
 
 impl Session {
@@ -617,29 +678,52 @@ impl Session {
                 let entry = self.entry(at);
                 let call = match &entry.what {
                     What::Tool(call) => call,
-                    What::Thought(thought) => return Some(thought.lasted(entry.at)),
+                    What::Thought(thought) => {
+                        return Some(self.thought_lasted(thought, entry.at));
+                    }
                     What::Message(_) | What::Context(_) | What::Event(_) | What::Other(_) => {
                         return None;
                     }
                 };
-                let took = call.end.map(|end| {
-                    entry
-                        .at
-                        .zip(end)
-                        .map(|(start, end)| seconds_between(start, end))
-                });
+                let took = call.end.map(|end| self.between(entry.at, end));
                 (entry.at, took)
             }
         };
         Some(match course {
-            Course::Running => Lasted::Running { since },
+            Course::Running => match since.map(|since| self.lasted_to_now(since)) {
+                Some(SessionLasted::Held { seconds }) => Lasted::Paused { seconds },
+                Some(SessionLasted::Going { since }) => Lasted::Running { since: Some(since) },
+                None => Lasted::Running { since: None },
+            },
             Course::Ended(seconds) => Lasted::Took { seconds },
             Course::Interrupted => Lasted::Interrupted {
-                seconds: since
-                    .zip(self.end.at())
-                    .map(|(start, end)| seconds_between(start, end)),
+                seconds: self.between(since, self.end.at()),
             },
         })
+    }
+
+    /// How long a thought that started `at` went on.
+    pub(crate) fn thought_lasted(&self, thought: &Thought, at: Option<Timestamp>) -> Lasted {
+        self.ended(at, thought.ended_at(), thought.cut_short())
+    }
+
+    /// How long something that started `start` and ended `end` lasted,
+    /// where both are known, and whether it was `cut_short`.
+    fn ended(&self, start: Option<Timestamp>, end: Option<Timestamp>, cut_short: bool) -> Lasted {
+        let seconds = self.between(start, end);
+        if cut_short {
+            Lasted::Interrupted { seconds }
+        } else {
+            Lasted::Took { seconds }
+        }
+    }
+
+    /// The seconds from `start` to `end`, where both are known, leaving out
+    /// the session's waits for the usage limit.
+    fn between(&self, start: Option<Timestamp>, end: Option<Timestamp>) -> Option<f64> {
+        start
+            .zip(end)
+            .map(|(start, end)| self.seconds_between(start, end))
     }
     /// How long its `turn`th turn, from 0, took, once it has ended: from its
     /// start to the latest time of its entries or, where its session ended
@@ -652,7 +736,7 @@ impl Session {
             Course::Interrupted => self.turn_ended_at(n),
         };
         let cut_short = turn.end == Course::Interrupted;
-        Some(Lasted::ended(turn.started_at, to, cut_short))
+        Some(self.ended(turn.started_at, to, cut_short))
     }
 
     /// When its `turn`th turn, from 0, ended, if it has and that is known:
@@ -666,7 +750,7 @@ impl Session {
     }
 
     /// How long its last turn has gone on so far, leaving out its waits for
-    /// the usage limit to reset, while it goes on and when it started is
+    /// the usage limit, while it goes on and when it started is
     /// known (`docs/specs/runs.md`, Run, Working).
     pub fn turn_so_far(&self) -> Option<SessionLasted> {
         let turn = self
@@ -677,31 +761,66 @@ impl Session {
     }
 
     /// How long it has run so far, leaving out its waits for the usage
-    /// limit to reset, unless when it started is not known
+    /// limit, unless when it started is not known
     /// (`docs/specs/runs.md`, Run, A session's heading).
     pub fn lasted_so_far(&self) -> Option<SessionLasted> {
         self.started_at.map(|start| self.lasted_from(start))
     }
 
     /// How long it has run from `from`, leaving out its waits for the usage
-    /// limit to reset: up to its end or, where that is not known, to its last
+    /// limit: up to its end or, where that is not known, to its last
     /// entry; while it goes on, to now, holding still while it waits.
     pub fn lasted_from(&self, from: Timestamp) -> SessionLasted {
         let to = match self.end {
             End::At(at) => at,
             End::NotKnown => self.last_at().map_or(from, |last| last.max(from)),
-            End::Going => match self.waiting() {
-                Some(wait) => wait.at.max(from),
-                None => {
-                    return SessionLasted::Going {
-                        since: from + self.waited(from, None),
-                    };
-                }
-            },
+            End::Going => return self.lasted_to_now(from),
         };
-        let lasted = (to - from - self.waited(from, Some(to))).max(TimeDelta::zero());
         SessionLasted::Held {
-            seconds: lasted.as_seconds_f64(),
+            seconds: self.seconds_between(from, to),
+        }
+    }
+
+    /// How long from `from` to now lasted, leaving out the session's waits
+    /// for the usage limit: holding still while it waits.
+    fn lasted_to_now(&self, from: Timestamp) -> SessionLasted {
+        match self.waiting() {
+            Some(wait) => SessionLasted::Held {
+                seconds: self.seconds_between(from, wait.at.max(from)),
+            },
+            None => SessionLasted::Going {
+                since: from + self.waited(from, None),
+            },
+        }
+    }
+
+    /// The seconds from `from` to `to`, leaving out the session's waits for
+    /// the usage limit that overlap them: none when `to` comes first.
+    fn seconds_between(&self, from: Timestamp, to: Timestamp) -> f64 {
+        (to - from - self.waited(from, Some(to)))
+            .max(TimeDelta::zero())
+            .as_seconds_f64()
+    }
+
+    /// What it does, as its last line says, while it goes on: waiting for
+    /// the usage limit, in a turn or between turns, or else working in a
+    /// turn while no entry runs (`docs/specs/components.md`, Transcript,
+    /// Working).
+    pub fn working(&self) -> Option<Working> {
+        if self.end != End::Going {
+            return None;
+        }
+        match self.waiting() {
+            Some(wait) => Some(Working::Waiting {
+                until: wait.until,
+                lasted: self.turn_so_far().or_else(|| {
+                    self.last_at()
+                        .or(self.started_at)
+                        .map(|from| self.lasted_from(from))
+                }),
+            }),
+            None if !self.runs_an_entry() => self.turn_so_far().map(Working::Working),
+            None => None,
         }
     }
 
@@ -774,8 +893,22 @@ impl Session {
     }
 }
 
-/// How long a session has run, leaving out its waits for the usage limit to
-/// reset.
+/// What a session that goes on does, as its last line says
+/// (`docs/specs/components.md`, Transcript, Working).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Working {
+    /// It waits for the usage limit, `until` the reset time stated last, if
+    /// any. In a turn, the turn has gone on `lasted`; between turns, it
+    /// went on `lasted` from its last entry; each where that is known.
+    Waiting {
+        until: Option<Timestamp>,
+        lasted: Option<SessionLasted>,
+    },
+    /// Its turn has gone on as long as this, while no entry runs.
+    Working(SessionLasted),
+}
+
+/// How long a session has run, leaving out its waits for the usage limit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SessionLasted {
     /// It goes on: as long as since `since`, its start moved on by how long
@@ -875,6 +1008,17 @@ pub enum What {
     Other(Value),
 }
 
+impl What {
+    /// Whether it is a step of the agent's work: a message, a thought or a
+    /// tool call, as against what it was told or an event.
+    fn is_step(&self) -> bool {
+        match self {
+            What::Message(_) | What::Thought(_) | What::Tool(_) => true,
+            What::Context(_) | What::Event(_) | What::Other(_) => false,
+        }
+    }
+}
+
 /// Where the agent thought before what it did next
 /// (`docs/specs/runs.md`, Transcripts, Thinking).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -921,11 +1065,6 @@ impl Thought {
             Held::Text(text) => text,
             Held::Redacted(_) => "",
         }
-    }
-
-    /// How long it went on, from `at`, its start.
-    fn lasted(&self, at: Option<Timestamp>) -> Lasted {
-        Lasted::ended(at, self.ended_at(), self.cut_short())
     }
 }
 
@@ -1284,7 +1423,7 @@ enum Thread {
 
 /// Where an entry is: its turn, and its path through the calls that hold
 /// it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntryAt {
     pub turn: usize,
     pub path: Vec<usize>,
@@ -1318,6 +1457,9 @@ pub enum Change {
     Ended(Place, Option<Timestamp>),
     /// Its `n`th wait for the usage limit, from 0, began.
     WaitBegan(usize),
+    /// Its `n`th wait for the usage limit, from 0, which goes on, had its
+    /// reset time stated again.
+    WaitRestated(usize),
     /// Its `n`th wait for the usage limit, from 0, ended.
     WaitEnded(usize),
     /// The session ended, after each entry it interrupted.
@@ -1465,18 +1607,56 @@ impl Parser {
 
     fn session_event(&mut self, event: SessionEvent) {
         match event {
-            SessionEvent::Waiting { at, until } => {
-                self.end_turn(Course::Ended(None));
-                self.session.waits.push(Wait {
-                    at,
-                    until,
-                    end: End::Going,
-                });
-                self.changed
-                    .push(Change::WaitBegan(self.session.waits.len() - 1));
-            }
+            SessionEvent::Waiting { at, until } => self.wait(at, until),
             SessionEvent::Waited { at } => self.end_wait(End::At(at)),
             SessionEvent::Ended { at } => self.end(Some(at)),
+        }
+    }
+
+    /// Begins a wait `at` for the usage limit `until` then, if that is
+    /// stated, unless one goes on: then states its reset time again, if it
+    /// states one. A wait before any turn or after the session's end is
+    /// none Linewright writes, and is skipped.
+    fn wait(&mut self, at: Timestamp, until: Option<Timestamp>) {
+        if self.session.end != End::Going {
+            return;
+        }
+        let n = self.session.waits.len();
+        if let Some(going) = n.checked_sub(1)
+            && self.session.waits[going].end == End::Going
+        {
+            if until.is_some() {
+                self.session.waits[going].until = until;
+                self.changed.push(Change::WaitRestated(going));
+            }
+            return;
+        }
+        let Some(turn) = self.session.turns.len().checked_sub(1) else {
+            return;
+        };
+        let place = if self.session.turns[turn].end == Course::Running {
+            WaitPlace::InTurn(turn)
+        } else {
+            WaitPlace::AfterTurn(turn)
+        };
+        self.session.waits.push(Wait {
+            at,
+            until,
+            end: End::Going,
+            place,
+        });
+        self.changed.push(Change::WaitBegan(n));
+    }
+
+    /// Places each wait of the `turn`th turn not yet placed: before the
+    /// step `at`, or else after the turn.
+    fn place_waits(&mut self, turn: usize, at: Option<&EntryAt>) {
+        for wait in &mut self.session.waits {
+            if wait.place == WaitPlace::InTurn(turn) {
+                wait.place = at.map_or(WaitPlace::AfterTurn(turn), |at| {
+                    WaitPlace::Before(at.clone())
+                });
+            }
         }
     }
 
@@ -1549,10 +1729,17 @@ impl Parser {
             let at = self.threads.get(&Thread::Main).copied();
             self.push(n, None, Entry { at, what });
         }
+        self.place_waits(n, None);
         Some(n)
     }
 
+    /// Begins a turn, ending the one before unless it has ended. A wait of
+    /// the turn before that no step of its came after comes after that
+    /// turn, before any step its end cuts short.
     fn begin_turn(&mut self, started_at: Option<Timestamp>, prompt: Prompt) {
+        if let Some(before) = self.session.turns.len().checked_sub(1) {
+            self.place_waits(before, None);
+        }
         self.end_turn(Course::Ended(None));
         self.last_at = started_at.or(self.last_at);
         self.threads.clear();
@@ -1716,6 +1903,7 @@ impl Parser {
         } else {
             None
         };
+        let step = entry.what.is_step();
         let entries = match parent {
             Some(path) => &mut call_at(&mut self.session.turns[turn].entries, path).entries,
             None => &mut self.session.turns[turn].entries,
@@ -1729,6 +1917,9 @@ impl Parser {
                 self.threads.insert(Thread::SubAgent(id.clone()), started);
             }
             self.calls.insert(id, at.clone());
+        }
+        if step {
+            self.place_waits(turn, Some(&at));
         }
         self.changed.push(Change::Added(Place::Entry(at)));
     }
