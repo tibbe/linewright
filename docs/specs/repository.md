@@ -66,17 +66,17 @@ repository and about Linewright's account in the repository.
 
 The repository holds, under `.linewright/` on its default branch, what it
 tells Linewright: its automations in `automations/`
-([Automations](automations.md)), its settings for the work in `config.toml`
+([Automations](automations.md)), its settings for the work in `config.yaml`
 ([The repository's file](operation.md#the-repositorys-file)) and its briefs in
 `briefs/` ([Briefs](operation.md#briefs)).
 
 - **When they are read.** As a run starts, from the default branch as it is
   then, so that a change takes effect once merged and every run on a branch
   works from the same files whatever the branch holds; the automation files
-  ([Automations](automations.md)) and the `setup` table of `config.toml`
+  ([Automations](automations.md)) and the `setup` settings in `config.yaml`
   ([Environment](sessions.md#environment)) are read at each poll instead.
 - **A file with an error.** A file under `.linewright/` that Linewright
-  cannot use holds the runs it could change, and `config.toml` the builds of
+  cannot use holds the runs it could change, and `config.yaml` the builds of
   the environment too. A file that is not one of
   Linewright's, hidden files aside, could be meant for any run, so it holds
   every one. The items wait, and `status` and `explain` name the file and

@@ -57,7 +57,7 @@ Look at the bugs fixed in the past week ...
 - **Session settings.** The front matter also takes the session settings the
   repository's file takes
   ([The repository's file](operation.md#the-repositorys-file)), as a layer
-  above every whole-pipeline layer, as a stage's table is
+  above every whole-pipeline layer, as a stage's mapping is
   ([Stage settings](operation.md#stage-settings)).
 - **A file that does not parse.** Every file in `.linewright/automations/`,
   hidden files aside, is an automation file; one that does not parse is

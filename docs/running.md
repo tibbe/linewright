@@ -35,43 +35,43 @@ ID or what the run waits for.
 ## Settings
 
 Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
-in `linewright.toml`, except `session-env`, which has no variable;
-`lw --help` lists them with their defaults. A setting in a table, such as
-`command` in `[setup]`, is the flag `--setup-command` and the variable
+in `linewright.yaml`, except `session-env`, which has no variable;
+`lw --help` lists them with their defaults. A setting in a mapping, such as
+`command` under `setup`, is the flag `--setup-command` and the variable
 `LINEWRIGHT_SETUP_COMMAND`.
 
 ### Stage settings
 
 `model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`) and
-`session-timeout` are for the whole pipeline, and a stage's table in
-`linewright.toml` can set its own for its sessions. `model` has no default:
-you set it for the whole pipeline, to one your credentials can use, and
-Linewright starts no session without it. `effort` is `medium` unless
-you set it. A stage's `session-pass-env` and `session-env`
-add their variables to the whole pipeline's for that stage's sessions only,
-and a value the stage's `session-env` sets wins over the whole pipeline's.
-The stages are `triage`, `design`, `implement`, `rework`, `fix-ci` and
-`update`. The scorer of a trial is no stage, but its session takes its settings
-from the table `[stage.scorer]` as a stage's sessions do. These tables have no
-flags or variables.
+`session-timeout` are for the whole pipeline, and a stage's mapping under
+`stages` in `linewright.yaml` can set its own for its sessions. `model` has no
+default: you set it for the whole pipeline, to one your credentials can use, and
+Linewright starts no session without it. `effort` is `medium` unless you set it.
+A stage's `session-pass-env` and `session-env` add their variables to the whole
+pipeline's for that stage's sessions only, and a value the stage's `session-env`
+sets wins over the whole pipeline's. The stages are `triage`, `design`,
+`implement`, `rework`, `fix-ci` and `update`. The scorer of a trial is no stage,
+but its session takes its settings from `stages.scorer` as a stage's sessions
+do. A stage's settings have no flags or variables.
 
-```toml
-model = "sonnet"
-effort = "medium"
+```yaml
+model: sonnet
+effort: medium
 
-[stage.implement]
-model = "opus"
-effort = "high"
-session-timeout = "2h"
-session-pass-env = ["DEPLOY_KEY"]
+stages:
+  implement:
+    model: opus
+    effort: high
+    session-timeout: 2h
+    session-pass-env: [DEPLOY_KEY]
 ```
 
 A model or effort Linewright sets wins over `ANTHROPIC_MODEL`,
 `CLAUDE_CODE_EFFORT_LEVEL` and the repository's Claude Code settings.
 
 The repository can set `model`, `effort` and `session-timeout` too, for the
-whole pipeline and in stage tables, and `[setup]` and `maintenance` for the
-whole pipeline, in `.linewright/config.toml` on its default branch. Its settings
+whole pipeline and under `stages`, and `setup` and `maintenance` for the
+whole pipeline, in `.linewright/config.yaml` on its default branch. Its settings
 win over your file, and your flags and variables win over its whole-pipeline
 settings.
 
@@ -86,19 +86,18 @@ make the repository ready once, in the environment, and start every session's
 clone from it. The setup command builds the environment, and the maintenance
 command runs in each session's clone to bring it up to date with its branch.
 
-```toml
-maintenance = "npm install"
+```yaml
+maintenance: npm install
 
-[setup]
-command = "npm ci"
-max-age = "24h"
-timeout = "60m"
+setup:
+  command: npm ci
+  max-age: 24h
+  timeout: 60m
 ```
 
-`maintenance` goes before `[setup]`: a key after a table's header belongs to
-that table. Neither can be set in a stage's table or an automation's front
-matter. Without a setup command there is no environment, and each session's
-clone is a plain clone of its branch.
+Neither can be set under `stages` or in an automation's front matter. Without a
+setup command there is no environment, and each session's clone is a plain clone
+of its branch.
 
 - **The setup command** runs with `bash` in the root of a clone of the default
   branch at its head, with nothing on its standard input and the sessions'
@@ -244,8 +243,8 @@ that prefix. Claude Code's settings outside those prefixes, such as
 `DISABLE_TELEMETRY`, are part of the rest: pass them too, or set them in a
 [managed settings file](https://code.claude.com/docs/en/managed-settings),
 which sessions read. At startup Linewright logs the names of the variables it
-keeps from sessions, and which of those each stage's table gives its sessions,
-so a build that fails only in a session shows there what to add.
+keeps from sessions, and which of those each stage's mapping gives its
+sessions, so a build that fails only in a session shows there what to add.
 
 | for | add to `session-pass-env` |
 |---|---|
@@ -258,11 +257,13 @@ so a build that fails only in a session shows there what to add.
 To give sessions a value Linewright's environment doesn't hold, set it in
 `session-env`, or with `--session-env NAME=value` once per variable. Values are
 strings, used as written, and win over a variable of the same name passed from
-Linewright's environment. For a Rust project, `linewright.toml` would have:
+Linewright's environment. For a Rust project, `linewright.yaml` would have:
 
-```toml
-session-pass-env = ["CARGO_HOME", "RUSTUP_HOME"]
-session-env = { RUST_LOG = "info", CARGO_TERM_COLOR = "never" }
+```yaml
+session-pass-env: [CARGO_HOME, RUSTUP_HOME]
+session-env:
+  RUST_LOG: info
+  CARGO_TERM_COLOR: never
 ```
 
 Credentials your agents need for other services, such as a cloud account or a
@@ -272,13 +273,13 @@ secrets in `secrets` as well, so that Linewright redacts them; it redacts on
 its own those sessions get without your naming them, such as Claude Code's
 login, a credential in its `ANTHROPIC_CUSTOM_HEADERS`, or a proxy's password:
 
-```toml
-session-pass-env = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]
-secrets = ["AWS_SECRET_ACCESS_KEY"]
+```yaml
+session-pass-env: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION]
+secrets: [AWS_SECRET_ACCESS_KEY]
 ```
 
 A `--secrets` flag and `LINEWRIGHT_SECRETS` add their names to those in
-`linewright.toml`.
+`linewright.yaml`.
 
 ### Credentials outside Linewright
 
@@ -303,16 +304,16 @@ looks for a leak: a session that learned how the work turned out, such as from
 the merged pull request, whose trial says nothing about the stage.
 
 To try a change, run the trials under a configuration: a directory laid out as
-`.linewright/`, whose `config.toml` sets only `model`, `effort` and
-`session-timeout`, with no tables, and whose `briefs/` holds files of the
-brief. Each of them overrides every other layer, flags and stage tables
-included, and the rest comes from those layers. A benchmark run's launch
-refuses a configuration with an error, naming the file and the error, and each
-trial keeps a copy of it in its output's `configuration/`. The scorer does not
-take it.
+`.linewright/`, whose `config.yaml` sets only `model`, `effort` and
+`session-timeout`, none of them under `stages`, and whose `briefs/` holds files
+of the brief. Each of them overrides every other layer, flags and stages'
+mappings included, and the rest comes from those layers. A benchmark run's
+launch refuses a configuration with an error, naming the file and the error, and
+each trial keeps a copy of it in its output's `configuration/`. The scorer does
+not take it.
 
 A trial's and a scorer's sessions have a `gh` kept from the task's repository
-on GitHub, and the scorer's session takes its settings from `[stage.scorer]`
+on GitHub, and the scorer's session takes its settings from `stages.scorer`
 ([Stage settings](#stage-settings)). A scorer scores only a trial whose run
 ended done or handed back, and keeps the score in the trial's output:
 
@@ -430,14 +431,14 @@ callback, such as `https://linewright.example.com/auth/google/callback`:
 
 `manager` names an identity that is always a manager, as `google:` and an
 email or `github:` and a login, such as `github:octocat`. The client secrets
-come from the environment only, never a flag or `linewright.toml`, and
+come from the environment only, never a flag or `linewright.yaml`, and
 sessions are never given them.
 
-```toml
-public-url = "https://linewright.example.com"
-google-client-id = "1234-abcd.apps.googleusercontent.com"
-google-signup-domains = ["example.com"]
-manager = "google:alice@example.com"
+```yaml
+public-url: https://linewright.example.com
+google-client-id: 1234-abcd.apps.googleusercontent.com
+google-signup-domains: [example.com]
+manager: google:alice@example.com
 ```
 
 Linewright exits at startup when these settings do not fit together, such as
@@ -479,7 +480,7 @@ still runs, for the reason [the spec](specs/webhooks.md) gives.
 
 2. Set `LINEWRIGHT_WEBHOOK_SECRET` to it where `serve` runs, and restart it.
    The secret comes from the environment only, never a flag or
-   `linewright.toml`. `serve` then also listens over plain HTTP on
+   `linewright.yaml`. `serve` then also listens over plain HTTP on
    `webhook-address`, `0.0.0.0:8080` unless set otherwise, and logs
    `listening for webhook deliveries` with the address.
 

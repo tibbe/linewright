@@ -174,8 +174,8 @@ once.
 
 ## Configuration
 
-Every setting is a key in the operator's TOML config file (`--config`, default
-`linewright.toml` in the working directory); some are also keys in the
+Every setting is a key in the operator's YAML config file (`--config`, default
+`linewright.yaml` in the working directory); some are also keys in the
 repository's file ([The repository's file](#the-repositorys-file)). Each place a
 setting is set is a layer, highest first: flag, environment variable, the
 repository's file, the operator's file, default. In a trial, a configuration
@@ -221,21 +221,23 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 
 - **Combining layers.** A setting's value combines what every layer sets, by
   what the setting holds: a value is the highest layer's, a list holds the
-  entries of every layer, and a table holds the names of every layer, each
+  entries of every layer, and a mapping holds the names of every layer, each
   name's value combined as a value is.
 - **A value or a list.** A setting that holds one is also a flag and an
   environment variable (`LINEWRIGHT_<FLAG>`).
-- **A table of values.** A setting that holds one is also a flag, given once
+- **A mapping of values.** A setting that holds one is also a flag, given once
   per entry and split at the first `=`, such as `--session-env NAME=value`,
   and has no environment variable. An entry without `=`, or a name given
   twice in one layer, is an error at startup.
-- **A table of settings.** A setting whose name holds a dot, such as
-  `setup.command`, is a key in a table of the config file, `[setup]` with
-  `command` in it. Its flag and environment variable name it with the dot as
-  a `-`: `--setup-command` and `LINEWRIGHT_SETUP_COMMAND`.
-- **A stage's table.** Its entries are settings, so it is a key only.
+- **A mapping of settings.** A setting whose name holds a dot is a key in the
+  mapping under the part before the dot, such as `setup.command`, which is
+  `command` under `setup`. Its flag and environment variable name it with the
+  dot as a `-`: `--setup-command` and `LINEWRIGHT_SETUP_COMMAND`.
+- **A stage's mapping.** Its entries are settings, so it is a key only.
+- **No value.** A key with no value, such as `setup:` with nothing under it,
+  sets nothing, and so does a config file that holds nothing but comments.
 - **A wrong value.** A setting whose value is not one it takes, such as an
-  `effort` outside its levels or an unknown key in a stage's table, is an
+  `effort` outside its levels or an unknown key in a stage's mapping, is an
   error: at startup in the operator's layers
   ([Startup](repository.md#startup)), and a file with an error in the
   repository's ([Linewright's files](repository.md#linewrights-files)).
@@ -277,25 +279,24 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 
 A stage's sessions take the session settings, `model`, `effort`,
 `session-timeout`, `session-env` and `session-pass-env`, from the
-whole pipeline and from the stage's own tables, which are layers above every
+whole pipeline and from the stage's own mappings, which are layers above every
 whole-pipeline layer ([Configuration](#configuration)).
 
-- **The tables.** A stage's settings are a table in a config file,
-  `[stage.NAME]` with the stage's name under [Runs](runs.md), such as
-  `[stage.implement]`, with the session settings as its keys.
+- **The mappings.** In a config file, a stage's settings are the mapping at
+  `stages.NAME`, such as `stages.implement`, with the session settings as its
+  keys. NAME is the stage's name under [Runs](runs.md).
 - **The scorer.** The session of the scorer takes its settings as the sessions
-  of a stage do, from the table `[stage.scorer]`
-  ([Scoring](benchmarks.md#scoring)).
+  of a stage do, from `stages.scorer` ([Scoring](benchmarks.md#scoring)).
 
 ## The repository's file
 
-The repository configures the work its agents do in `.linewright/config.toml`
-on its default branch, the same TOML as the operator's file.
+The repository configures the work its agents do in `.linewright/config.yaml`
+on its default branch, the same YAML as the operator's file.
 
 - **Its keys.** The session settings ([Stage settings](#stage-settings))
   except `session-env` and `session-pass-env`, for the whole pipeline and in
-  stage tables, and the `setup` table and `maintenance`, for the whole
-  pipeline. Any other key is an error: the rest of the settings are the
+  a stage's mapping, and the `setup` settings and `maintenance`, for the
+  whole pipeline. Any other key is an error: the rest of the settings are the
   operator's.
 - **When it is read, and a file with an error.** As for every file of
   Linewright's in the repository
@@ -439,7 +440,7 @@ while `public-url` is set. People reach the UI at `public-url`.
 - A value built from other variables, such as a `PATH` with a directory
   added.
 - The settings the pipeline reads between runs, such as `auto-merge` or
-  `max-runs`, in the repository's file, other than the `setup` table.
+  `max-runs`, in the repository's file, other than the `setup` settings.
 - How Linewright is released (`docs/releasing.md`).
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.
