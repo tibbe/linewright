@@ -3117,10 +3117,10 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn every_attempt_of_a_run_re_run_twice_is_read() {
-        let (store, _root) = holding(LINEWRIGHT, read::re_run_twice()).await;
+    async fn every_attempt_of_a_run_re_run_three_times_is_read() {
+        let (store, _root) = holding(LINEWRIGHT, read::re_run_three_times()).await;
 
-        read::every_attempt_of_a_run_re_run_twice_is_read(&store).await;
+        read::every_attempt_of_a_run_re_run_three_times_is_read(&store).await;
     }
 
     #[test_log::test(tokio::test)]
@@ -3139,7 +3139,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn a_poll_with_nothing_new_reads_the_same() {
-        let (store, _root) = holding(LINEWRIGHT, read::re_run_twice()).await;
+        let (store, _root) = holding(LINEWRIGHT, read::re_run_three_times()).await;
 
         read::a_poll_with_nothing_new_reads_the_same(&store).await;
     }

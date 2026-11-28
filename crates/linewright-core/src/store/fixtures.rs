@@ -20,4 +20,5 @@ pub const REST_REPOSITORY: &str = include_str!("fixtures/rest-repository.json");
 pub const REST_RULES_MAIN: &str = include_str!("fixtures/rest-rules-main.json");
 pub const REST_USER: &str = include_str!("fixtures/rest-user.json");
 pub const WORKFLOW_RUN_FORK_MAIN: &str = include_str!("fixtures/workflow-run-fork-main.json");
-pub const WORKFLOW_RUN_RE_RUN_TWICE: &str = include_str!("fixtures/workflow-run-re-run-twice.json");
+pub const WORKFLOW_RUN_RE_RUN_THREE_TIMES: &str =
+    include_str!("fixtures/workflow-run-re-run-three-times.json");

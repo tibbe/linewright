@@ -7854,24 +7854,30 @@ mod tests {
             serde_json::from_str(json).unwrap()
         }
 
-        /// tibbe/linewright's run 40834616225 at its third attempt, with its
-        /// first two.
-        fn re_run_twice() -> Actions {
+        /// tibbe/linewright's run 43463419555 at its fourth attempt, with
+        /// its first three.
+        fn re_run_three_times() -> Actions {
             Actions {
                 runs: vec![recorded(
-                    linewright_core::store::fixtures::WORKFLOW_RUN_RE_RUN_TWICE,
+                    linewright_core::store::fixtures::WORKFLOW_RUN_RE_RUN_THREE_TIMES,
                 )],
                 attempts: BTreeMap::from([
                     (
-                        (40_834_616_225, 1),
+                        (43_463_419_555, 1),
                         recorded(include_str!(
-                            "fixtures/workflow-run-re-run-twice-attempt-1.json"
+                            "fixtures/workflow-run-re-run-three-times-attempt-1.json"
                         )),
                     ),
                     (
-                        (40_834_616_225, 2),
+                        (43_463_419_555, 2),
                         recorded(include_str!(
-                            "fixtures/workflow-run-re-run-twice-attempt-2.json"
+                            "fixtures/workflow-run-re-run-three-times-attempt-2.json"
+                        )),
+                    ),
+                    (
+                        (43_463_419_555, 3),
+                        recorded(include_str!(
+                            "fixtures/workflow-run-re-run-three-times-attempt-3.json"
                         )),
                     ),
                 ]),
@@ -8026,26 +8032,27 @@ mod tests {
         }
 
         #[test_log::test(tokio::test)]
-        async fn every_attempt_of_a_run_re_run_twice_is_read_fetching_each_earlier_one_once() {
-            let (github, answered) = serving_actions(LINEWRIGHT, re_run_twice()).await;
+        async fn every_attempt_of_a_run_re_run_three_times_is_read_fetching_each_earlier_one_once()
+        {
+            let (github, answered) = serving_actions(LINEWRIGHT, re_run_three_times()).await;
 
-            read::every_attempt_of_a_run_re_run_twice_is_read(&github).await;
+            read::every_attempt_of_a_run_re_run_three_times_is_read(&github).await;
 
-            for n in 1..=2 {
-                let path = format!("/repos/{LINEWRIGHT}/actions/runs/40834616225/attempts/{n}");
+            for n in 1..=3 {
+                let path = format!("/repos/{LINEWRIGHT}/actions/runs/43463419555/attempts/{n}");
                 assert_eq!(asked(&answered, &path).len(), 1, "{path}");
             }
         }
 
         #[test_log::test(tokio::test)]
         async fn a_run_in_progress_is_left_out() {
-            let mut actions = re_run_twice();
+            let mut actions = re_run_three_times();
             actions.runs.push(recorded(include_str!(
                 "fixtures/workflow-run-in-progress.json"
             )));
             let (github, _) = serving_actions(LINEWRIGHT, actions).await;
 
-            read::every_attempt_of_a_run_re_run_twice_is_read(&github).await;
+            read::every_attempt_of_a_run_re_run_three_times_is_read(&github).await;
         }
 
         #[test_log::test(tokio::test)]
@@ -8078,7 +8085,7 @@ mod tests {
         /// a poll in the same hour lists the runs at the same URL.
         #[test_log::test(tokio::test)]
         async fn a_poll_with_nothing_new_is_answered_304() {
-            let (github, answered) = serving_actions(LINEWRIGHT, re_run_twice()).await;
+            let (github, answered) = serving_actions(LINEWRIGHT, re_run_three_times()).await;
 
             read::a_poll_with_nothing_new_reads_the_same(&github).await;
 
@@ -8090,7 +8097,7 @@ mod tests {
                 .find(|(name, _)| name == "created")
                 .unwrap()
                 .1;
-            assert_eq!(created, ">=2026-10-29T07:00:00Z");
+            assert_eq!(created, ">=2026-11-13T16:00:00Z");
         }
 
         /// GitHub lists at most 1000 runs for a filter
@@ -8098,7 +8105,7 @@ mod tests {
         /// and lists none past them however many it counts.
         #[test_log::test(tokio::test)]
         async fn a_window_of_more_than_a_thousand_runs_is_read_in_narrower_ranges() {
-            let run = recorded(linewright_core::store::fixtures::WORKFLOW_RUN_RE_RUN_TWICE);
+            let run = recorded(linewright_core::store::fixtures::WORKFLOW_RUN_RE_RUN_THREE_TIMES);
             let since = read::re_run_created();
             let runs: Vec<Value> = (0..1200u64)
                 .map(|n| {

@@ -22,37 +22,39 @@ fn id(run: u64, attempt: u32) -> AttemptId {
     }
 }
 
-/// The repository of [`re_run_twice`].
+/// The repository of [`re_run_three_times`].
 pub const LINEWRIGHT: &str = "tibbe/linewright";
 
 /// The repository of [`fork_run_on_main`].
 pub const REGISTER: &str = "is-a-dev/register";
 
-/// When GitHub created the run of [`re_run_twice`].
+/// When GitHub created the run of [`re_run_three_times`].
 pub fn re_run_created() -> Timestamp {
-    at("2026-10-29T07:18:43Z")
+    at("2026-11-13T16:30:39Z")
 }
 
-/// The attempts of tibbe/linewright's CI run 40834616225, which failed
-/// twice and was re-run twice: `fixtures/workflow-run-re-run-twice.json`
-/// and its `-attempt-1` and `-attempt-2`.
-pub fn re_run_twice() -> Vec<CompletedAttempt> {
+/// The attempts of tibbe/linewright's CI run 43463419555, which failed
+/// three times and was re-run three times:
+/// `fixtures/workflow-run-re-run-three-times.json` and its `-attempt-1`,
+/// `-attempt-2` and `-attempt-3`.
+pub fn re_run_three_times() -> Vec<CompletedAttempt> {
     [
-        (1, "2026-10-29T07:22:19Z", Conclusion::Failure),
-        (2, "2026-10-29T07:24:25Z", Conclusion::Failure),
-        (3, "2026-10-29T07:27:13Z", Conclusion::Success),
+        (1, "2026-11-13T16:45:52Z", Conclusion::Failure),
+        (2, "2026-11-13T17:09:39Z", Conclusion::Failure),
+        (3, "2026-11-13T17:25:43Z", Conclusion::Failure),
+        (4, "2026-11-13T17:36:21Z", Conclusion::Success),
     ]
     .into_iter()
     .map(|(attempt, completed_at, conclusion)| CompletedAttempt {
-        id: id(40_834_616_225, attempt),
+        id: id(43_463_419_555, attempt),
         workflow: "CI".into(),
         run_created_at: re_run_created(),
         completed_at: at(completed_at),
         conclusion: AttemptConclusion::Known(conclusion),
-        branch: Some("22665-design".into()),
-        commit: "b46bed43544054fdaaa9aea073de0eed7f3e1663".into(),
+        branch: Some("1177-spec-change-redact-what-linewright-produ".into()),
+        commit: "5ff00348cb5a392276a772be09ca518186fc4e3e".into(),
         link: format!(
-            "https://github.com/tibbe/linewright/actions/runs/40834616225/attempts/{attempt}"
+            "https://github.com/tibbe/linewright/actions/runs/43463419555/attempts/{attempt}"
         ),
     })
     .collect()
@@ -95,16 +97,20 @@ fn unknown(attempts: Vec<CompletedAttempt>, known: &BTreeSet<AttemptId>) -> Vec<
     attempts
 }
 
-/// `store` holds [`re_run_twice`]'s run, and perhaps others in progress:
+/// `store` holds [`re_run_three_times`]'s run, and perhaps others in progress:
 /// every attempt of it is read, and those known need not be.
-pub async fn every_attempt_of_a_run_re_run_twice_is_read(store: &dyn Store) {
+pub async fn every_attempt_of_a_run_re_run_three_times_is_read(store: &dyn Store) {
     let none = BTreeSet::new();
     let all = read(store, re_run_created(), &none).await;
-    assert_eq!(unknown(all, &none), re_run_twice());
+    assert_eq!(unknown(all, &none), re_run_three_times());
 
-    let known = BTreeSet::from([id(40_834_616_225, 1), id(40_834_616_225, 2)]);
+    let known = BTreeSet::from([
+        id(43_463_419_555, 1),
+        id(43_463_419_555, 2),
+        id(43_463_419_555, 3),
+    ]);
     let latest = read(store, re_run_created(), &known).await;
-    assert_eq!(unknown(latest, &known), re_run_twice()[2..]);
+    assert_eq!(unknown(latest, &known), re_run_three_times()[3..]);
 }
 
 /// `store` holds `attempt` alone: it is read as it is held.
@@ -113,13 +119,13 @@ pub async fn the_attempt_is_read(store: &dyn Store, attempt: CompletedAttempt) {
     assert_eq!(read, [attempt]);
 }
 
-/// `store` holds [`re_run_twice`]'s run: a poll after one that read it,
+/// `store` holds [`re_run_three_times`]'s run: a poll after one that read it,
 /// with nothing new, reads the same.
 pub async fn a_poll_with_nothing_new_reads_the_same(store: &dyn Store) {
     let none = BTreeSet::new();
     for _ in 0..2 {
         let read = read(store, re_run_created(), &none).await;
-        assert_eq!(unknown(read, &none), re_run_twice());
+        assert_eq!(unknown(read, &none), re_run_three_times());
     }
 }
 
