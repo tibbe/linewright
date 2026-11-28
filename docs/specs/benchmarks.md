@@ -216,16 +216,16 @@ layers.
 
 - **From the command line.** The directory of a configuration, CONFIG, has
   the same layout as a repository's `.linewright/`: the settings in
-  `config.toml` and the files of the brief in `briefs/`.
+  `config.yaml` and the files of the brief in `briefs/`.
 - **Files of the brief.** A configuration can hold each file that a layer of
   the brief can hold ([Briefs](operation.md#briefs)).
-- **Settings.** `config.toml` holds only `model`, `effort` and
-  `session-timeout`, with no tables. A setting in it overrides that setting
-  in every stage table.
+- **Settings.** `config.yaml` holds only `model`, `effort` and
+  `session-timeout`. A setting in it overrides that setting in every stage's
+  mapping.
 - **The scorer.** A configuration applies to the sessions of the run, not to
   the session of a scorer.
 - **An error.** Each file that Linewright refuses in a layer of the brief,
-  each other file in CONFIG and each other key in `config.toml` is an error,
+  each other file in CONFIG and each other key in `config.yaml` is an error,
   hidden files aside. Linewright refuses a configuration with an error before
   the trial starts. The refusal names the file and the error.
 

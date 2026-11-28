@@ -1420,7 +1420,7 @@ module linewright {
     else if (col == "Triage" and when_linewright_was_unassigned_from_it(w, i)) "unassigned"
     // Triage | "not marked for Linewright" | it is not marked for Linewright | 
     else if (col == "Triage" and when_it_is_not_marked_for_linewright(w, i)) "not marked for Linewright"
-    // Triage | "paused until" what ends the hold, naming a file: "paused until the environment is built", "paused until the default branch fixes .linewright/config.toml" | it would start, but for a hold | paused or queued
+    // Triage | "paused until" what ends the hold, naming a file: "paused until the environment is built", "paused until the default branch fixes .linewright/config.yaml" | it would start, but for a hold | paused or queued
     else if (col == "Triage" and when_it_would_start_but_for_a_hold(w, i)) "paused until"
     // Triage | "queued" | it would start, but the runs in flight are at max-runs | paused or queued
     else if (col == "Triage" and when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w, i)) "queued"
@@ -1442,7 +1442,7 @@ module linewright {
     else if (col == "Ready" and when_linewright_was_unassigned_from_it(w, i)) "unassigned"
     // Ready | "not marked for Linewright" | it is not marked for Linewright | 
     else if (col == "Ready" and when_it_is_not_marked_for_linewright(w, i)) "not marked for Linewright"
-    // Ready | "paused until" what ends the hold, naming a file: "paused until the environment is built", "paused until the default branch fixes .linewright/config.toml" | it would start, but for a hold | paused or queued
+    // Ready | "paused until" what ends the hold, naming a file: "paused until the environment is built", "paused until the default branch fixes .linewright/config.yaml" | it would start, but for a hold | paused or queued
     else if (col == "Ready" and when_it_would_start_but_for_a_hold(w, i)) "paused until"
     // Ready | "queued" | it would start, but the runs in flight are at max-runs | paused or queued
     else if (col == "Ready" and when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w, i)) "queued"

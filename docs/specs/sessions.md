@@ -115,7 +115,7 @@ With a setup command, every session's clone starts from the environment: the
 repository made ready for agents' work once, by the setup command, rather than
 in each session, much as a container starts from its image.
 
-- **The setup command.** The `setup` table's `command`
+- **The setup command.** `setup.command`
   ([Configuration](operation.md#configuration)), run by `bash` in the root of
   a clone of the default branch at its head, with nothing on its standard
   input, with the whole pipeline's environment variables
@@ -125,8 +125,8 @@ in each session, much as a container starts from its image.
   its branch. An environment built earlier is kept, unused, until a setup
   command is set again.
 - **A build.** Running the setup command is a build of the environment. A
-  build succeeds when the command exits with status 0 within the `setup`
-  table's `timeout`, and fails otherwise. A build is not a run. Processes it
+  build succeeds when the command exits with status 0 within
+  `setup.timeout`, and fails otherwise. A build is not a run. Processes it
   leaves running end when it ends; only its files are kept.
 - **A session's clone.** A copy of the environment with the session's branch
   checked out in it, sharing the environment's disk space where the filesystem
@@ -141,7 +141,7 @@ old, or on request, and a build replaces it only by succeeding.
   - the setup command, or a value `session-env` or `session-pass-env` gives
     the variables it runs with, changing from what the environment was built
     with;
-  - the environment growing older than the `setup` table's `max-age`;
+  - the environment growing older than `setup.max-age`;
   - `lw environment rebuild`.
 
 | State      | Event                        | Next       | Effect                                                                                       |
@@ -167,7 +167,7 @@ old, or on request, and a build replaces it only by succeeding.
   came while `serve` was down builds once it starts.
 - **`lw environment rebuild`.** It asks `serve` to build, and returns once the
   build ends; `--no-wait` returns once `serve` has taken the request. A
-  request while no build may start, as under a drain or a `config.toml`
+  request while no build may start, as under a drain or a `config.yaml`
   Linewright cannot use
   ([Linewright's files](repository.md#linewrights-files)), is refused, saying
   why, and is not kept for later. Its output and exit statuses are the
